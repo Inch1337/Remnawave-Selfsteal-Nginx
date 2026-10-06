@@ -55,6 +55,13 @@ if [[ $arch != x86_64 ]]; then
   exit 1
 fi
 
+if command -v nginx >/dev/null 2>&1 || [[ -e /etc/nginx/nginx.conf ]]; then
+  echo "Error: an existing nginx installation is not supported in v0.1.0." >&2
+  exit 1
+fi
+
+echo "nginx: not installed."
+
 if ! command -v ss >/dev/null 2>&1; then
   echo "Error: ss is required to check listening ports." >&2
   exit 1
@@ -77,7 +84,8 @@ if command -v docker >/dev/null 2>&1; then
   echo "Docker: installed."
 
   if ! docker_rows=$(docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null); then
-    echo "Warning: Docker is installed, but running containers cannot be checked."
+    echo "Error: Docker is installed, but running containers cannot be checked." >&2
+    exit 1
   else
     node_name=$(awk '$2 ~ /(^|\/)remnawave\/node(:|@|$)/ {print $1; exit}' <<< "$docker_rows")
 
@@ -136,19 +144,47 @@ if ! server_ipv4=$(curl -4fsS --max-time 10 https://api.ipify.org); then
   exit 1
 fi
 
-if ! domain_ipv4=$(getent ahostsv4 "$domain" | awk '{print $1}' | sort -u); then
-  echo "Error: cannot resolve the domain to an IPv4 address." >&2
+if ! command -v resolvectl >/dev/null 2>&1; then
+  echo "Error: resolvectl is required for DNS checks." >&2
   exit 1
 fi
+
+if ! a_result=$(LC_ALL=C resolvectl --legend=no --cache=no --synthesize=no \
+    --protocol=dns --type=A query "$domain" 2>&1); then
+  echo "Error: cannot query DNS A records: $a_result" >&2
+  exit 1
+fi
+
+domain_ipv4=$(awk '$2 == "IN" && $3 == "A" {print $4}' <<< "$a_result" | sort -u)
 
 printf 'VPS public IPv4: %s\n' "$server_ipv4"
-printf 'Domain IPv4: %s\n' "$domain_ipv4"
+printf 'DNS A: %s\n' "$domain_ipv4"
 
 if [[ $domain_ipv4 != "$server_ipv4" ]]; then
-  echo "Error: the domain does not point only to this VPS." >&2
+  echo "Error: DNS A must point only to this VPS." >&2
   exit 1
 fi
 
-echo "Domain IPv4 matches this VPS."
+if aaaa_result=$(LC_ALL=C resolvectl --legend=no --cache=no --synthesize=no \
+    --protocol=dns --type=AAAA query "$domain" 2>&1); then
+  echo "Error: DNS AAAA exists; v0.1.0 supports IPv4 only." >&2
+  printf '%s\n' "$aaaa_result" >&2
+  exit 1
+elif [[ $aaaa_result == *"does not have any RR of the requested type"* ]]; then
+  echo "DNS AAAA: none."
+else
+  echo "Error: cannot verify DNS AAAA: $aaaa_result" >&2
+  exit 1
+fi
+
+echo "DNS matches this VPS."
+
+if ! curl -4fsS --connect-timeout 5 --max-time 15 \
+    -o /dev/null https://acme-v02.api.letsencrypt.org/directory; then
+  echo "Error: Let's Encrypt API is unreachable." >&2
+  exit 1
+fi
+
+echo "Let's Encrypt API: reachable."
 
 echo "Initial checks passed. No changes have been made to the system."
