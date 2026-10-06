@@ -102,4 +102,53 @@ else
   echo "Docker: not installed (allowed)."
 fi
 
+if ! read -r -p "Enter domain: " domain </dev/tty; then
+  echo "Error: cannot read domain from terminal." >&2
+  exit 1
+fi
+
+domain=${domain,,}
+
+if [[ -z $domain || ${#domain} -gt 253 ||
+      $domain != *.* || $domain == .* || $domain == *. ]]; then
+  echo "Error: enter a valid domain name, without https:// or a trailing dot." >&2
+  exit 1
+fi
+
+IFS='.' read -r -a labels <<< "$domain"
+for label in "${labels[@]}"; do
+  if (( ${#label} > 63 )) ||
+     [[ ! $label =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+    echo "Error: invalid domain name." >&2
+    exit 1
+  fi
+done
+
+echo "Domain format: OK ($domain)"
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "Error: curl is required for the network check." >&2
+  exit 1
+fi
+
+if ! server_ipv4=$(curl -4fsS --max-time 10 https://api.ipify.org); then
+  echo "Error: cannot determine the VPS public IPv4." >&2
+  exit 1
+fi
+
+if ! domain_ipv4=$(getent ahostsv4 "$domain" | awk '{print $1}' | sort -u); then
+  echo "Error: cannot resolve the domain to an IPv4 address." >&2
+  exit 1
+fi
+
+printf 'VPS public IPv4: %s\n' "$server_ipv4"
+printf 'Domain IPv4: %s\n' "$domain_ipv4"
+
+if [[ $domain_ipv4 != "$server_ipv4" ]]; then
+  echo "Error: the domain does not point only to this VPS." >&2
+  exit 1
+fi
+
+echo "Domain IPv4 matches this VPS."
+
 echo "Initial checks passed. No changes have been made to the system."
