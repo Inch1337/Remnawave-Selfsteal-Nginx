@@ -15,8 +15,30 @@ if [[ -e $STATE_DIR && ! -f $STATE_FILE ]]; then
   exit 1
 fi
 
+if [[ -L $STATE_DIR || -L $STATE_FILE ]]; then
+  echo "Error: installation state must not be a symlink." >&2
+  exit 1
+fi
+
 if [[ -f $STATE_FILE ]]; then
-  echo "Existing installation found. Resume is not implemented yet." >&2
+  mapfile -t state_lines < "$STATE_FILE"
+
+  if (( ${#state_lines[@]} != 3 )) ||
+     [[ ${state_lines[0]} != DOMAIN=* ||
+        ${state_lines[1]} != TARGET_PORT=9443 ||
+        ${state_lines[2]} != VERSION=0.1.0 ]]; then
+    echo "Error: invalid installation state file." >&2
+    exit 1
+  fi
+
+  saved_domain=${state_lines[0]#DOMAIN=}
+  if [[ -z $saved_domain ]]; then
+    echo "Error: domain is missing from installation state." >&2
+    exit 1
+  fi
+
+  echo "Existing installation found for $saved_domain."
+  echo "Resume is not implemented yet."
   exit 1
 fi
 
