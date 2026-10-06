@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-
-# Prefile checks
-
 if [[ $EUID -ne 0 ]]; then
   echo "Error: run this script as root." >&2
   exit 1
 fi
 
+# Detect an existing installation
+STATE_DIR=/etc/remnawave-selfsteal
+STATE_FILE=$STATE_DIR/state.conf
+
+if [[ -e $STATE_DIR && ! -f $STATE_FILE ]]; then
+  echo "Error: state directory exists without a valid state file." >&2
+  exit 1
+fi
+
+if [[ -f $STATE_FILE ]]; then
+  echo "Existing installation found. Resume is not implemented yet." >&2
+  exit 1
+fi
+
+echo "Installation state: new."
+
+# Preflight checks
 if [[ ! -r /etc/os-release ]]; then
   echo "Error: cannot identify the operating system." >&2
   exit 1
@@ -26,7 +40,6 @@ swap_kib=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)
 disk_kib=$(df -Pk / | awk 'NR == 2 {print $4}')
 
 # Check vps status
-
 if [[ ! $mem_kib =~ ^[0-9]+$ ||
       ! $swap_kib =~ ^[0-9]+$ ||
       ! $disk_kib =~ ^[0-9]+$ ]]; then
@@ -53,7 +66,6 @@ elif (( disk_kib < 4194304 )); then
 fi
 
 # Checking Architecture
-
 arch=$(uname -m)
 printf 'Architecture: %s\n' "$arch"
 
@@ -63,7 +75,6 @@ if [[ $arch != x86_64 ]]; then
 fi
 
 # Is nginx installed
-
 if command -v nginx >/dev/null 2>&1 || [[ -e /etc/nginx/nginx.conf ]]; then
   echo "Error: an existing nginx installation is not supported in v0.1.0." >&2
   exit 1
@@ -72,7 +83,6 @@ fi
 echo "nginx: not installed."
 
 # Check ports
-
 if ! command -v ss >/dev/null 2>&1; then
   echo "Error: ss is required to check listening ports." >&2
   exit 1
@@ -92,7 +102,6 @@ fi
 echo "Ports 80 and 9443: free."
 
 # Check docker and it's network
-
 if command -v docker >/dev/null 2>&1; then
   echo "Docker: installed."
 
@@ -124,7 +133,6 @@ else
 fi
 
 # Domain status
-
 if ! read -r -p "Enter domain: " domain </dev/tty; then
   echo "Error: cannot read domain from terminal." >&2
   exit 1
@@ -150,7 +158,6 @@ done
 echo "Domain format: OK ($domain)"
 
 # Avalability of domain
-
 if ! command -v curl >/dev/null 2>&1; then
   echo "Error: curl is required for the network check." >&2
   exit 1
@@ -173,7 +180,6 @@ if ! a_result=$(LC_ALL=C resolvectl --legend=no --cache=no --synthesize=no \
 fi
 
 # Check A record
-
 domain_ipv4=$(awk '$2 == "IN" && $3 == "A" {print $4}' <<< "$a_result" | sort -u)
 
 printf 'VPS public IPv4: %s\n' "$server_ipv4"
@@ -199,7 +205,6 @@ fi
 echo "DNS matches this VPS."
 
 # Acme.sh avalability
-
 if ! curl -4fsS --connect-timeout 5 --max-time 15 \
     -o /dev/null https://acme-v02.api.letsencrypt.org/directory; then
   echo "Error: Let's Encrypt API is unreachable." >&2
