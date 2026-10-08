@@ -6,17 +6,41 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# Check the domain format supported by this installer.
+# Returns 0 if valid, 1 otherwise.
+valid_domain() {
+  local candidate=${1,,}
+  local label
+  local -a labels
+
+  if [[ -z $candidate || ${#candidate} -gt 253 ||
+        $candidate != *.* || $candidate == .* || $candidate == *. ||
+        $candidate == *..* || $candidate =~ ^[0-9.]+$ ]]; then
+    return 1
+  fi
+
+  IFS='.' read -r -a labels <<< "$candidate"
+  for label in "${labels[@]}"; do
+    if (( ${#label} > 63 )) ||
+       [[ ! $label =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 # Detect an existing installation
 STATE_DIR=/etc/remnawave-selfsteal
 STATE_FILE=$STATE_DIR/state.conf
 
-if [[ -e $STATE_DIR && ! -f $STATE_FILE ]]; then
-  echo "Error: state directory exists without a valid state file." >&2
+if [[ -L $STATE_DIR || -L $STATE_FILE ]]; then
+  echo "Error: installation state must not be a symlink." >&2
   exit 1
 fi
 
-if [[ -L $STATE_DIR || -L $STATE_FILE ]]; then
-  echo "Error: installation state must not be a symlink." >&2
+if [[ -e $STATE_DIR && ! -f $STATE_FILE ]]; then
+  echo "Error: state directory exists without a valid state file." >&2
   exit 1
 fi
 
@@ -32,13 +56,15 @@ if [[ -f $STATE_FILE ]]; then
   fi
 
   saved_domain=${state_lines[0]#DOMAIN=}
-  if [[ -z $saved_domain ]]; then
-    echo "Error: domain is missing from installation state." >&2
+
+  if ! valid_domain "$saved_domain"; then
+    echo "Error: invalid domain in installation state." >&2
     exit 1
   fi
 
+  saved_domain=${saved_domain,,}
   echo "Existing installation found for $saved_domain."
-  echo "Resume is not implemented yet."
+  echo "Resume is not implemented yet." >&2
   exit 1
 fi
 
@@ -162,20 +188,10 @@ fi
 
 domain=${domain,,}
 
-if [[ -z $domain || ${#domain} -gt 253 ||
-      $domain != *.* || $domain == .* || $domain == *. ]]; then
-  echo "Error: enter a valid domain name, without https:// or a trailing dot." >&2
+if ! valid_domain "$domain"; then
+  echo "Error: invalid domain name." >&2
   exit 1
 fi
-
-IFS='.' read -r -a labels <<< "$domain"
-for label in "${labels[@]}"; do
-  if (( ${#label} > 63 )) ||
-     [[ ! $label =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
-    echo "Error: invalid domain name." >&2
-    exit 1
-  fi
-done
 
 echo "Domain format: OK ($domain)"
 
