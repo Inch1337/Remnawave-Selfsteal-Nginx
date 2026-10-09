@@ -63,12 +63,13 @@ if [[ -f $STATE_FILE ]]; then
   fi
 
   saved_domain=${saved_domain,,}
-  echo "Existing installation found for $saved_domain."
-  echo "Resume is not implemented yet." >&2
-  exit 1
+  install_mode=resume
+  domain=$saved_domain
+  echo "Existing installation found for $domain."
+else
+  install_mode=new
+  echo "Installation state: new."
 fi
-
-echo "Installation state: new."
 
 # Preflight checks
 if [[ ! -r /etc/os-release ]]; then
@@ -122,32 +123,35 @@ if [[ $arch != x86_64 ]]; then
   exit 1
 fi
 
-# Is nginx installed
-if command -v nginx >/dev/null 2>&1 || [[ -e /etc/nginx/nginx.conf ]]; then
-  echo "Error: an existing nginx installation is not supported in v0.1.0." >&2
-  exit 1
+if [[ $install_mode == new ]]; then
+  # Is nginx installed
+  if command -v nginx >/dev/null 2>&1 || [[ -e /etc/nginx/nginx.conf ]]; then
+    echo "Error: an existing nginx installation is not supported in v0.1.0." >&2
+    exit 1
+  fi
+
+  echo "nginx: not installed."
+
+  # Check ports
+  if ! command -v ss >/dev/null 2>&1; then
+    echo "Error: ss is required to check listening ports." >&2
+    exit 1
+  fi
+
+  if ! listeners=$(ss -H -ltnp '( sport = :80 or sport = :9443 )'); then
+    echo "Error: cannot check listening ports." >&2
+    exit 1
+  fi
+
+  if [[ -n $listeners ]]; then
+    echo "Error: port 80 or 9443 is already in use:" >&2
+    printf '%s\n' "$listeners" >&2
+    exit 1
+  fi
+
+  echo "Ports 80 and 9443: free."
 fi
 
-echo "nginx: not installed."
-
-# Check ports
-if ! command -v ss >/dev/null 2>&1; then
-  echo "Error: ss is required to check listening ports." >&2
-  exit 1
-fi
-
-if ! listeners=$(ss -H -ltnp '( sport = :80 or sport = :9443 )'); then
-  echo "Error: cannot check listening ports." >&2
-  exit 1
-fi
-
-if [[ -n $listeners ]]; then
-  echo "Error: port 80 or 9443 is already in use:" >&2
-  printf '%s\n' "$listeners" >&2
-  exit 1
-fi
-
-echo "Ports 80 and 9443: free."
 
 # Check docker and it's network
 if command -v docker >/dev/null 2>&1; then
@@ -181,9 +185,13 @@ else
 fi
 
 # Domain status
-if ! read -r -p "Enter domain: " domain </dev/tty; then
-  echo "Error: cannot read domain from terminal." >&2
-  exit 1
+if [[ $install_mode == new ]]; then
+  if ! read -r -p "Enter domain: " domain </dev/tty; then
+    echo "Error: cannot read domain from terminal." >&2
+    exit 1
+  fi
+else
+  echo "Domain from installation state: $domain"
 fi
 
 domain=${domain,,}
@@ -250,5 +258,10 @@ if ! curl -4fsS --connect-timeout 5 --max-time 15 \
 fi
 
 echo "Let's Encrypt API: reachable."
+
+if [[ $install_mode == resume ]]; then
+  echo "Resume checks are not implemented yet. No changes have been made." >&2
+  exit 1
+fi
 
 echo "Initial checks passed. No changes have been made to the system."
