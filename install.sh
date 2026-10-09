@@ -413,20 +413,20 @@ if [[ $install_mode == resume ]]; then
 
   check_ports_free
   echo "Resume stage: state saved, nginx not installed yet."
-
-  if [[ $action == check ]]; then
-    echo "State-only resume checks passed. No changes have been made."
-    exit 0
-  fi
-
-  echo "Resume installation is not implemented yet; no packages or configuration were changed." >&2
-  exit 1
 fi
 
 if [[ $action == check ]]; then
-  echo "Initial checks passed. No changes have been made to the system."
+  if [[ $install_mode == resume ]]; then
+    echo "State-only resume checks passed. No changes have been made."
+  else
+    echo "Initial checks passed. No changes have been made to the system."
+  fi
   exit 0
 fi
 
-echo "Installation is not implemented yet; no packages or configuration were changed." >&2
-exit 1
+if [[ $install_mode == new ]]; then
+  create_initial_state
+fi
+
+echo "Installation state is ready. Package installation is not implemented yet."
+exit 0
