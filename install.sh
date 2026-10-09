@@ -51,6 +51,46 @@ check_ports_free() {
   echo "Ports 80 and 9443: free."
 }
 
+render_http_nginx_config() {
+  cat <<NGINX
+# Managed by Remnawave Self-Steal Nginx v0.1.0
+server {
+    listen 80;
+    server_name $domain;
+
+    root /var/www/remnawave-selfsteal;
+
+    location ^~ /.well-known/acme-challenge/ {
+        try_files \$uri =404;
+    }
+
+    location / {
+        return 404;
+    }
+}
+NGINX
+}
+
+render_https_nginx_config() {
+  cat <<NGINX
+# Managed by Remnawave Self-Steal Nginx v0.1.0
+server {
+    listen 127.0.0.1:9443 ssl;
+    server_name $domain;
+
+    ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
+
+    root /var/www/remnawave-selfsteal;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+NGINX
+}
+
 # Detect an existing installation
 STATE_DIR=/etc/remnawave-selfsteal
 STATE_FILE=$STATE_DIR/state.conf
