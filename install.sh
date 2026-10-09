@@ -29,6 +29,27 @@ valid_domain() {
 
   return 0
 }
+check_ports_free() {
+  local listeners
+
+  if ! command -v ss >/dev/null 2>&1; then
+    echo "Error: ss is required to check listening ports." >&2
+    exit 1
+  fi
+
+  if ! listeners=$(ss -H -ltnp '( sport = :80 or sport = :9443 )'); then
+    echo "Error: cannot check listening ports." >&2
+    exit 1
+  fi
+
+  if [[ -n $listeners ]]; then
+    echo "Error: port 80 or 9443 is already in use:" >&2
+    printf '%s\n' "$listeners" >&2
+    exit 1
+  fi
+
+  echo "Ports 80 and 9443: free."
+}
 
 # Detect an existing installation
 STATE_DIR=/etc/remnawave-selfsteal
@@ -133,23 +154,7 @@ if [[ $install_mode == new ]]; then
   echo "nginx: not installed."
 
   # Check ports
-  if ! command -v ss >/dev/null 2>&1; then
-    echo "Error: ss is required to check listening ports." >&2
-    exit 1
-  fi
-
-  if ! listeners=$(ss -H -ltnp '( sport = :80 or sport = :9443 )'); then
-    echo "Error: cannot check listening ports." >&2
-    exit 1
-  fi
-
-  if [[ -n $listeners ]]; then
-    echo "Error: port 80 or 9443 is already in use:" >&2
-    printf '%s\n' "$listeners" >&2
-    exit 1
-  fi
-
-  echo "Ports 80 and 9443: free."
+  check_ports_free
 fi
 
 
@@ -260,7 +265,14 @@ fi
 echo "Let's Encrypt API: reachable."
 
 if [[ $install_mode == resume ]]; then
-  echo "Resume checks are not implemented yet. No changes have been made." >&2
+  if command -v nginx >/dev/null 2>&1 || [[ -e /etc/nginx/nginx.conf ]]; then
+    echo "Error: nginx is present; ownership check is not implemented yet." >&2
+    exit 1
+  fi
+
+  check_ports_free
+  echo "Resume stage: state saved, nginx not installed yet."
+  echo "Resume execution is not implemented yet. No changes have been made." >&2
   exit 1
 fi
 
