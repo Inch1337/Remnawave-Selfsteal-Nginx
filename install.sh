@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if (( $# > 1 )); then
+  echo "Usage: bash install.sh [--check|--install]" >&2
+  exit 2
+fi
+
+case ${1:-} in
+  ""|--check) action=check ;;
+  --install) action=install ;;
+  *)
+    echo "Usage: bash install.sh [--check|--install]" >&2
+    exit 2
+    ;;
+esac
+
 if [[ $EUID -ne 0 ]]; then
   echo "Error: run this script as root." >&2
   exit 1
@@ -340,8 +354,20 @@ if [[ $install_mode == resume ]]; then
 
   check_ports_free
   echo "Resume stage: state saved, nginx not installed yet."
-  echo "Resume execution is not implemented yet. No changes have been made." >&2
+
+  if [[ $action == check ]]; then
+    echo "State-only resume checks passed. No changes have been made."
+    exit 0
+  fi
+
+  echo "Resume installation is not implemented yet. No changes have been made." >&2
   exit 1
 fi
 
-echo "Initial checks passed. No changes have been made to the system."
+if [[ $action == check ]]; then
+  echo "Initial checks passed. No changes have been made to the system."
+  exit 0
+fi
+
+echo "Installation is not implemented yet. No changes have been made." >&2
+exit 1
