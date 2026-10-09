@@ -51,6 +51,7 @@ check_ports_free() {
   echo "Ports 80 and 9443: free."
 }
 
+# Nginx functions
 render_http_nginx_config() {
   cat <<NGINX
 # Managed by Remnawave Self-Steal Nginx v0.1.0
@@ -89,6 +90,33 @@ server {
     }
 }
 NGINX
+}
+
+# Creating file in temporary DIR 
+create_initial_state() {
+  local staged_dir
+
+  if [[ -e $STATE_DIR || -L $STATE_DIR ]]; then
+    echo "Error: installation state already exists." >&2
+    exit 1
+  fi
+
+  if ! staged_dir=$(mktemp -d "${STATE_DIR}.tmp.XXXXXX"); then
+    echo "Error: cannot prepare installation state." >&2
+    exit 1
+  fi
+
+  printf 'DOMAIN=%s\nTARGET_PORT=9443\nVERSION=0.1.0\n' \
+    "$domain" > "$staged_dir/state.conf"
+  chmod 600 "$staged_dir/state.conf"
+
+  if [[ -e $STATE_DIR || -L $STATE_DIR ]]; then
+    echo "Error: installation state appeared during setup." >&2
+    exit 1
+  fi
+
+  mv -T -- "$staged_dir" "$STATE_DIR"
+  echo "Installation state saved for $domain."
 }
 
 # Detect an existing installation
