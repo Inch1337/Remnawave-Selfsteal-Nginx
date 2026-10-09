@@ -133,6 +133,65 @@ create_initial_state() {
   echo "Installation state saved for $domain."
 }
 
+package_installed() {
+  dpkg-query -W -f='${Status}\n' "$1" 2>/dev/null |
+    grep -Fxq 'install ok installed'
+}
+
+ensure_required_packages() {
+  local package
+  local -a missing=()
+
+  for package in nginx certbot; do
+    if ! package_installed "$package"; then
+      missing+=("$package")
+    fi
+  done
+
+  if (( ${#missing[@]} == 0 )); then
+    echo "Packages nginx and certbot: already installed."
+    return 0
+  fi
+
+  printf 'Installing packages: %s\n' "${missing[*]}"
+  apt-get update
+  apt-get install -y --no-install-recommends "${missing[@]}"
+
+  for package in "${missing[@]}"; do
+    if ! package_installed "$package"; then
+      echo "Error: package $package was not installed correctly." >&2
+      exit 1
+    fi
+  done
+}
+
+acquire_install_lock() {
+  local lock_file=/run/remnawave-selfsteal.lock
+
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "Error: flock is required for installation." >&2
+    exit 1
+  fi
+
+  if [[ -e $lock_file && ! -f $lock_file ]] || [[ -L $lock_file ]]; then
+    echo "Error: invalid installation lock file." >&2
+    exit 1
+  fi
+
+  exec {INSTALL_LOCK_FD}<>"$lock_file"
+
+  if ! flock -n "$INSTALL_LOCK_FD"; then
+    echo "Error: another installation is already running." >&2
+    exit 1
+  fi
+
+  echo "Installation lock: acquired."
+}
+
+if [[ $action == install ]]; then
+  acquire_install_lock
+fi
+
 # Detect an existing installation
 STATE_DIR=/etc/remnawave-selfsteal
 STATE_FILE=$STATE_DIR/state.conf
@@ -360,7 +419,7 @@ if [[ $install_mode == resume ]]; then
     exit 0
   fi
 
-  echo "Resume installation is not implemented yet. No changes have been made." >&2
+  echo "Resume installation is not implemented yet; no packages or configuration were changed." >&2
   exit 1
 fi
 
@@ -369,5 +428,5 @@ if [[ $action == check ]]; then
   exit 0
 fi
 
-echo "Installation is not implemented yet. No changes have been made." >&2
+echo "Installation is not implemented yet; no packages or configuration were changed." >&2
 exit 1
