@@ -1,25 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if (( $# > 1 )); then
-  echo "Usage: bash install.sh [--check|--install]" >&2
-  exit 2
-fi
-
-case ${1:-} in
-  ""|--check) action=check ;;
-  --install) action=install ;;
-  *)
-    echo "Usage: bash install.sh [--check|--install]" >&2
-    exit 2
-    ;;
-esac
-
-if [[ $EUID -ne 0 ]]; then
-  echo "Error: run this script as root." >&2
-  exit 1
-fi
-
 # Check the domain format supported by this installer.
 # Returns 0 if valid, 1 otherwise.
 valid_domain() {
@@ -188,9 +169,51 @@ acquire_install_lock() {
   echo "Installation lock: acquired."
 }
 
-if [[ $action == install ]]; then
-  acquire_install_lock
-fi
+check_http_site_file() {
+  local site_file=${1:-/etc/nginx/sites-available/remnawave-selfsteal.conf}
+
+  if [[ -L $site_file ]] ||
+     [[ -e $site_file && ! -f $site_file ]]; then
+    echo "Error: expected a regular nginx configuration file: $site_file" >&2
+    return 1
+  fi
+
+  if [[ ! -e $site_file ]]; then
+    echo "HTTP configuration: not created yet."
+    return 0
+  fi
+
+  if ! cmp -s <(render_http_nginx_config) "$site_file"; then
+    echo "Error: nginx configuration differs from the expected HTTP configuration: $site_file" >&2
+    return 1
+  fi
+
+  echo "HTTP configuration: matches the installer."
+}
+
+main() {
+  if (( $# > 1 )); then
+    echo "Usage: bash install.sh [--check|--install]" >&2
+    exit 2
+  fi
+
+  case ${1:-} in
+    ""|--check) action=check ;;
+    --install) action=install ;;
+    *)
+      echo "Usage: bash install.sh [--check|--install]" >&2
+      exit 2
+      ;;
+  esac
+
+  if [[ $EUID -ne 0 ]]; then
+    echo "Error: run this script as root." >&2
+    exit 1
+  fi
+
+  if [[ $action == install ]]; then
+    acquire_install_lock
+  fi
 
 # Detect an existing installation
 STATE_DIR=/etc/remnawave-selfsteal
@@ -430,3 +453,9 @@ fi
 
 echo "Installation state is ready. Package installation is not implemented yet."
 exit 0
+
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi
