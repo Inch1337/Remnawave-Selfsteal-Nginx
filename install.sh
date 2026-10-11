@@ -191,6 +191,51 @@ check_http_site_file() {
   echo "HTTP configuration: matches the installer."
 }
 
+write_http_site_file() {
+  local site_file=${1:-/etc/nginx/sites-available/remnawave-selfsteal.conf}
+  local site_dir=${site_file%/*}
+  local temporary_file
+
+  if [[ $site_dir == "$site_file" ]]; then
+    site_dir=.
+  fi
+
+  if ! check_http_site_file "$site_file"; then
+    return 1
+  fi
+
+  if [[ -f $site_file ]]; then
+    echo "HTTP configuration: already present."
+    return 0
+  fi
+
+  if [[ ! -d $site_dir ]]; then
+    echo "Error: nginx configuration directory does not exist: $site_dir" >&2
+    return 1
+  fi
+
+  if ! temporary_file=$(mktemp "$site_dir/.remnawave-selfsteal.XXXXXX"); then
+    echo "Error: cannot prepare a temporary nginx configuration." >&2
+    return 1
+  fi
+
+  if ! render_http_nginx_config > "$temporary_file" ||
+     ! chmod 644 "$temporary_file"; then
+    rm -f -- "$temporary_file"
+    echo "Error: cannot prepare the HTTP configuration." >&2
+    return 1
+  fi
+
+  if ! ln -T -- "$temporary_file" "$site_file"; then
+    rm -f -- "$temporary_file"
+    echo "Error: cannot create nginx configuration without replacing an existing file: $site_file" >&2
+    return 1
+  fi
+
+  rm -f -- "$temporary_file"
+  echo "HTTP configuration: created at $site_file."
+}
+
 main() {
   if (( $# > 1 )); then
     echo "Usage: bash install.sh [--check|--install]" >&2
