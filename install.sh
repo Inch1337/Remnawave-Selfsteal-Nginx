@@ -24,6 +24,81 @@ valid_domain() {
 
   return 0
 }
+
+read_installed_domain() {
+  local state_dir=/etc/remnawave-selfsteal
+  local state_file=$state_dir/state.conf
+  local -a state_lines
+
+  if [[ -L $state_dir || -L $state_file || ! -f $state_file ]]; then
+    echo "Error: valid installation state is missing." >&2
+    return 1
+  fi
+
+  if ! mapfile -t state_lines < "$state_file"; then
+    echo "Error: cannot read installation state." >&2
+    return 1
+  fi
+  if (( ${#state_lines[@]} != 3 )) ||
+     [[ ${state_lines[0]} != DOMAIN=* ||
+        ${state_lines[1]} != TARGET_PORT=9443 ||
+        ${state_lines[2]} != VERSION=0.1.0 ]]; then
+    echo "Error: invalid installation state." >&2
+    return 1
+  fi
+
+  domain=${state_lines[0]#DOMAIN=}
+  if ! valid_domain "$domain"; then
+    echo "Error: invalid domain in installation state." >&2
+    return 1
+  fi
+  domain=${domain,,}
+}
+
+check_domain_dns() {
+  local server_ipv4 a_result domain_ipv4 aaaa_result
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "Error: curl is required for the network check." >&2
+    return 1
+  fi
+  if ! server_ipv4=$(curl -4fsS --max-time 10 https://api.ipify.org); then
+    echo "Error: cannot determine the VPS public IPv4." >&2
+    return 1
+  fi
+  if ! command -v resolvectl >/dev/null 2>&1; then
+    echo "Error: resolvectl is required for DNS checks." >&2
+    return 1
+  fi
+  if ! a_result=$(LC_ALL=C resolvectl --legend=no --cache=no --synthesize=no \
+      --protocol=dns --type=A query "$domain" 2>&1); then
+    echo "Error: cannot query DNS A records: $a_result" >&2
+    return 1
+  fi
+
+  domain_ipv4=$(awk '$2 == "IN" && $3 == "A" {print $4}' <<< "$a_result" | sort -u)
+  printf 'VPS public IPv4: %s\n' "$server_ipv4"
+  printf 'DNS A: %s\n' "$domain_ipv4"
+  if [[ $domain_ipv4 != "$server_ipv4" ]]; then
+    echo "Error: DNS A must point only to this VPS." >&2
+    return 1
+  fi
+
+  if aaaa_result=$(LC_ALL=C resolvectl --legend=no --cache=no --synthesize=no \
+      --protocol=dns --type=AAAA query "$domain" 2>&1); then
+    echo "Error: DNS AAAA exists; v0.1.0 supports IPv4 only." >&2
+    printf '%s\n' "$aaaa_result" >&2
+    return 1
+  elif [[ $aaaa_result == *"does not have any RR of the requested type"* ]]; then
+    echo "DNS AAAA: none."
+  else
+    echo "Error: cannot verify DNS AAAA: $aaaa_result" >&2
+    return 1
+  fi
+
+  echo "DNS matches this VPS."
+}
+
 check_ports_free() {
   local listeners
 
@@ -729,26 +804,8 @@ if [[ -f $PACKAGE_MARKER ]]; then
 fi
 
 if [[ -f $STATE_FILE ]]; then
-  mapfile -t state_lines < "$STATE_FILE"
-
-  if (( ${#state_lines[@]} != 3 )) ||
-     [[ ${state_lines[0]} != DOMAIN=* ||
-        ${state_lines[1]} != TARGET_PORT=9443 ||
-        ${state_lines[2]} != VERSION=0.1.0 ]]; then
-    echo "Error: invalid installation state file." >&2
-    exit 1
-  fi
-
-  saved_domain=${state_lines[0]#DOMAIN=}
-
-  if ! valid_domain "$saved_domain"; then
-    echo "Error: invalid domain in installation state." >&2
-    exit 1
-  fi
-
-  saved_domain=${saved_domain,,}
+  read_installed_domain || exit 1
   install_mode=resume
-  domain=$saved_domain
   echo "Existing installation found for $domain."
 else
   install_mode=new
@@ -879,52 +936,8 @@ if [[ $install_mode == new ]] &&
   exit 1
 fi
 
-# Avalability of domain
-if ! command -v curl >/dev/null 2>&1; then
-  echo "Error: curl is required for the network check." >&2
-  exit 1
-fi
-
-if ! server_ipv4=$(curl -4fsS --max-time 10 https://api.ipify.org); then
-  echo "Error: cannot determine the VPS public IPv4." >&2
-  exit 1
-fi
-
-if ! command -v resolvectl >/dev/null 2>&1; then
-  echo "Error: resolvectl is required for DNS checks." >&2
-  exit 1
-fi
-
-if ! a_result=$(LC_ALL=C resolvectl --legend=no --cache=no --synthesize=no \
-    --protocol=dns --type=A query "$domain" 2>&1); then
-  echo "Error: cannot query DNS A records: $a_result" >&2
-  exit 1
-fi
-
-# Check A record
-domain_ipv4=$(awk '$2 == "IN" && $3 == "A" {print $4}' <<< "$a_result" | sort -u)
-
-printf 'VPS public IPv4: %s\n' "$server_ipv4"
-printf 'DNS A: %s\n' "$domain_ipv4"
-
-if [[ $domain_ipv4 != "$server_ipv4" ]]; then
-  echo "Error: DNS A must point only to this VPS." >&2
-  exit 1
-fi
-
-if aaaa_result=$(LC_ALL=C resolvectl --legend=no --cache=no --synthesize=no \
-    --protocol=dns --type=AAAA query "$domain" 2>&1); then
-  echo "Error: DNS AAAA exists; v0.1.0 supports IPv4 only." >&2
-  printf '%s\n' "$aaaa_result" >&2
-  exit 1
-elif [[ $aaaa_result == *"does not have any RR of the requested type"* ]]; then
-  echo "DNS AAAA: none."
-else
-  echo "Error: cannot verify DNS AAAA: $aaaa_result" >&2
-  exit 1
-fi
-
-echo "DNS matches this VPS."
+# Availability of domain
+check_domain_dns || exit 1
 
 # Acme.sh avalability
 if ! curl -4fsS --connect-timeout 5 --max-time 15 \

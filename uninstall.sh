@@ -12,23 +12,7 @@ acquire_install_lock
 
 STATE_DIR=/etc/remnawave-selfsteal
 STATE_FILE=$STATE_DIR/state.conf
-if [[ -L $STATE_DIR || -L $STATE_FILE || ! -f $STATE_FILE ]]; then
-  echo "Error: valid installation state is missing." >&2
-  exit 1
-fi
-mapfile -t state_lines < "$STATE_FILE"
-if (( ${#state_lines[@]} != 3 )) ||
-   [[ ${state_lines[0]} != DOMAIN=* ||
-      ${state_lines[1]} != TARGET_PORT=9443 ||
-      ${state_lines[2]} != VERSION=0.1.0 ]]; then
-  echo "Error: invalid installation state." >&2
-  exit 1
-fi
-domain=${state_lines[0]#DOMAIN=}
-if ! valid_domain "$domain"; then
-  echo "Error: invalid domain in installation state." >&2
-  exit 1
-fi
+read_installed_domain || exit 1
 
 assert_managed_file() {
   local file=$1 renderer=$2 legacy_renderer=${3:-}
