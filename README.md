@@ -4,7 +4,8 @@
 integration checks have passed.**
 
 This installer prepares an HTTP webroot for Let's Encrypt and an nginx TLS
-endpoint at `127.0.0.1:9443`. Remnawave Node configuration remains manual.
+endpoint at `127.0.0.1:9443` with HTTP/2 and TLS 1.3 support.
+Remnawave Node configuration remains manual.
 It does not edit Docker, Remnawave, Xray or the firewall.
 
 ## Supported host
@@ -17,7 +18,8 @@ It does not edit Docker, Remnawave, Xray or the firewall.
   left in place after nginx is installed.
 - No pre-existing Let's Encrypt lineage for the chosen domain.
 - If Remnawave Node is present, its Docker network mode must be `host`.
-- `curl`, `resolvectl` and `ss` available for the read-only preflight.
+- `curl` with HTTP/2 support, `resolvectl` and `ss` available for the
+  read-only preflight. Ubuntu's packaged curl supports HTTP/2.
 
 Less than 1 GiB RAM or no swap produces a warning. Less than 2 GiB free disk
 space stops installation. This installer does not perform a full system
@@ -49,6 +51,13 @@ has different contents rather than overwriting it. If a package operation
 was interrupted and `dpkg` reports an incomplete transaction, repair that
 transaction manually before retrying.
 
+After starting or reloading nginx, the installer waits up to 30 seconds
+(plus the final probe timeout) for the expected HTTP challenge or TLS
+endpoint to respond. It verifies both TLS 1.3 and negotiated HTTP/2.
+Temporary marker files left by an interrupted write are cleaned only while
+holding the installation lock, inside the root-owned mode-700 state
+directory. Unexpected file types, owners or permissions stop cleanup.
+
 After `--install` reports completion, configure Remnawave manually:
 
 ```text
@@ -58,13 +67,26 @@ xver        = 0
 ```
 
 `check.sh` reads installation state and checks DNS, nginx, HTTP, the
-certificate, local TLS, the renewal hook and the record of a successful
-renewal dry run without making changes. A failed dry run is a warning during
-installation, but `check.sh` reports incomplete status until a retry succeeds.
+certificate, local TLS 1.3/HTTP/2, the renewal hook and the record of a
+successful renewal dry run without making changes. Certbot's effective
+webroot for the chosen domain is read from its configuration, including
+the per-domain `webroot_map`. The successful dry-run record includes hashes
+of the renewal configuration and deploy hook. A changed configuration
+requires a new dry run on the next `--install`. Dry runs execute the deploy
+hook as well. A failed dry run exits with an error and leaves installation
+incomplete; repeat `--install` to retry.
 `uninstall.sh` removes only verified installer-managed files. It leaves
 the nginx and certbot packages installed and asks separately whether to
 delete the Let's Encrypt certificate. Keeping the certificate after removal
 requires a working HTTP-01 webroot for future renewals.
+Uninstall refuses symbolic links in parent directories of managed paths
+before removing installed files. Retained nginx packages mean a subsequent
+fresh installation still falls under the existing-nginx restriction;
+uninstall does not automatically purge packages or unrelated nginx sites.
+
+These changes have not been tested in this editing pass. Live certificate
+issuance/renewal, systemd behavior and the real Remnawave connection still
+need verification on the test VPS before release.
 
 ## Release status
 

@@ -20,7 +20,7 @@ assert_failure valid_domain 'example..com'
 
 render_http_nginx_config > "$fixture/http.conf"
 render_https_nginx_config > "$fixture/https.conf"
-grep -Fxq '    listen 127.0.0.1:9443 ssl;' "$fixture/https.conf"
+grep -Fxq '    listen 127.0.0.1:9443 ssl http2;' "$fixture/https.conf"
 assert_failure grep -Fq '0.0.0.0:9443' "$fixture/https.conf"
 grep -Fq 'try_files $uri $uri/ =404;' "$fixture/http.conf"
 
@@ -54,6 +54,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
 certificate_has_domain "$fixture/cert.pem"
 domain=ample.com
 assert_failure certificate_has_domain "$fixture/cert.pem"
+domain=example.com
 
 printf '[renewalparams]\nauthenticator = webroot\nwebroot_path = /var/www/remnawave-selfsteal,\n' > "$fixture/renewal.conf"
 certificate_renewal_uses_webroot "$fixture/renewal.conf"

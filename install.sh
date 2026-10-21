@@ -72,8 +72,10 @@ render_https_nginx_config() {
   cat <<NGINX
 # Managed by Remnawave Self-Steal Nginx v0.1.0
 server {
-    listen 127.0.0.1:9443 ssl;
+    listen 127.0.0.1:9443 ssl http2;
     server_name $domain;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
 
     ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
@@ -109,6 +111,8 @@ render_package_marker() {
 
 render_renewal_marker() {
   printf 'Remnawave Self-Steal Nginx renewal dry run passed: 0.1.0\n'
+  sha256sum -- "/etc/letsencrypt/renewal/$domain.conf" \
+    /etc/letsencrypt/renewal-hooks/deploy/remnawave-selfsteal-nginx.sh
 }
 
 render_deploy_hook() {
@@ -125,9 +129,14 @@ systemctl reload nginx
 HOOK
 }
 
-write_managed_file() {
+write_managed_file() (
   local file=$1 mode=$2 renderer=$3
   local directory=${file%/*} staged
+
+  if [[ $directory == "$file" ]]; then
+    directory=.
+  fi
+  check_directory_path "$directory" || return 1
 
   if [[ -L $file || ( -e $file && ! -f $file ) ]]; then
     echo "Error: managed path is not a regular file: $file" >&2
@@ -149,6 +158,10 @@ write_managed_file() {
     return 1
   fi
   staged=$(mktemp "$directory/.remnawave-selfsteal.XXXXXX") || return 1
+  trap 'rm -f -- "$staged"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   if ! "$renderer" > "$staged" || ! chmod "$mode" "$staged"; then
     rm -f -- "$staged"
     return 1
@@ -159,6 +172,82 @@ write_managed_file() {
     return 1
   fi
   rm -f -- "$staged"
+)
+
+# Reject symlinks and non-directory components before following managed paths.
+# Missing components are allowed for partial installs and partial uninstalls.
+check_directory_path() {
+  local directory=$1 component current=
+  local -a components
+  if [[ $directory == /* ]]; then
+    current=/
+  fi
+  IFS=/ read -r -a components <<< "$directory"
+  for component in "${components[@]}"; do
+    [[ -n $component && $component != . ]] || continue
+    if [[ $component == .. ]]; then
+      echo "Error: parent traversal is not allowed in managed paths: $directory" >&2
+      return 1
+    fi
+    if [[ -z $current ]]; then
+      current=$component
+    else
+      current=${current%/}/$component
+    fi
+    if [[ -L $current || ( -e $current && ! -d $current ) ]]; then
+      echo "Error: unsafe managed directory: $current" >&2
+      return 1
+    fi
+  done
+}
+
+# Call only while holding the install/uninstall lock. SIGKILL can leave these
+# files behind even though ordinary errors and termination run the EXIT trap.
+cleanup_state_temporary_files() {
+  local file name
+  local -a stale=()
+  check_directory_path "$STATE_DIR" || return 1
+  [[ -d $STATE_DIR ]] || return 0
+  if [[ $(stat -c '%u:%a' -- "$STATE_DIR") != "$EUID:700" ]]; then
+    echo "Error: state directory must be owned by root with mode 700." >&2
+    return 1
+  fi
+  for file in "$STATE_DIR"/.remnawave-selfsteal.*; do
+    [[ -e $file || -L $file ]] || continue
+    name=${file##*/}
+    if [[ ! $name =~ ^\.remnawave-selfsteal\.[a-zA-Z0-9]{6}$ ||
+          -L $file || ! -f $file ]] ||
+       [[ $(stat -c '%u:%a' -- "$file") != "$EUID:600" ]]; then
+      echo "Error: unexpected temporary state path: $file" >&2
+      return 1
+    fi
+    stale+=("$file")
+  done
+  for file in "${stale[@]}"; do
+    rm -- "$file" || return 1
+  done
+}
+
+check_renewal_record() {
+  local marker=$STATE_DIR/renewal.checked
+  [[ -f $marker && ! -L $marker ]] &&
+    certificate_renewal_uses_webroot &&
+    cmp -s <(render_renewal_marker) "$marker"
+}
+
+valid_renewal_marker() {
+  local marker=$1
+  local -a lines
+  [[ -f $marker && ! -L $marker ]] || return 1
+  mapfile -t lines < "$marker"
+  [[ ${lines[0]:-} == 'Remnawave Self-Steal Nginx renewal dry run passed: 0.1.0' ]] || return 1
+  # Accept the previous one-line format for upgrade and uninstall only.
+  (( ${#lines[@]} == 1 )) && return 0
+  (( ${#lines[@]} == 3 )) || return 1
+  [[ ${lines[1]:0:64} =~ ^[a-f0-9]{64}$ &&
+     ${lines[1]:64} == "  /etc/letsencrypt/renewal/$domain.conf" &&
+     ${lines[2]:0:64} =~ ^[a-f0-9]{64}$ &&
+     ${lines[2]:64} == '  /etc/letsencrypt/renewal-hooks/deploy/remnawave-selfsteal-nginx.sh' ]]
 }
 
 # Creating file in temporary DIR 
@@ -268,11 +357,12 @@ check_http_site_file() {
 write_http_site_file() {
   local site_file=${1:-/etc/nginx/sites-available/remnawave-selfsteal.conf}
   local site_dir=${site_file%/*}
-  local temporary_file
 
   if [[ $site_dir == "$site_file" ]]; then
     site_dir=.
   fi
+
+  check_directory_path "$site_dir" || return 1
 
   if ! check_http_site_file "$site_file"; then
     return 1
@@ -288,30 +378,13 @@ write_http_site_file() {
     return 1
   fi
 
-  if ! temporary_file=$(mktemp "$site_dir/.remnawave-selfsteal.XXXXXX"); then
-    echo "Error: cannot prepare a temporary nginx configuration." >&2
-    return 1
-  fi
-
-  if ! render_http_nginx_config > "$temporary_file" ||
-     ! chmod 644 "$temporary_file"; then
-    rm -f -- "$temporary_file"
-    echo "Error: cannot prepare the HTTP configuration." >&2
-    return 1
-  fi
-
-  if ! ln -T -- "$temporary_file" "$site_file"; then
-    rm -f -- "$temporary_file"
-    echo "Error: cannot create nginx configuration without replacing an existing file: $site_file" >&2
-    return 1
-  fi
-
-  rm -f -- "$temporary_file"
+  write_managed_file "$site_file" 644 render_http_nginx_config || return 1
   echo "HTTP configuration: created at $site_file."
 }
 
 ensure_directory() {
   local directory=$1
+  check_directory_path "$directory" || return 1
   if [[ -L $directory || ( -e $directory && ! -d $directory ) ]]; then
     echo "Error: expected a directory: $directory" >&2
     return 1
@@ -332,6 +405,8 @@ ensure_webroot() {
 ensure_site_link() {
   local available=$1 enabled=$2
   local target=../sites-available/${available##*/}
+  check_directory_path "${available%/*}" || return 1
+  check_directory_path "${enabled%/*}" || return 1
   if [[ -L $enabled ]]; then
     if [[ $(readlink -- "$enabled") != "$target" ]]; then
       echo "Error: nginx site link points elsewhere: $enabled" >&2
@@ -365,9 +440,12 @@ check_http_challenge() {
   local challenge response name
   challenge=$(mktemp "$webroot/.well-known/acme-challenge/probe.XXXXXX") || return 1
   name=${challenge##*/}
-  printf 'selfsteal-http-check\n' > "$challenge"
-  chmod 644 "$challenge"
-  if ! response=$(curl -4fsS --noproxy '*' --max-time 10 \
+  if ! printf 'selfsteal-http-check\n' > "$challenge" ||
+     ! chmod 644 "$challenge"; then
+    rm -f -- "$challenge"
+    return 1
+  fi
+  if ! response=$(curl -4fsS --noproxy '*' --connect-timeout 2 --max-time 5 \
     --resolve "$domain:80:127.0.0.1" \
     "http://$domain/.well-known/acme-challenge/$name"); then
     rm -f -- "$challenge"
@@ -379,6 +457,19 @@ check_http_challenge() {
     echo "Error: nginx served an unexpected HTTP challenge response." >&2
     return 1
   fi
+}
+
+wait_for_ready() {
+  local label=$1 deadline=$((SECONDS + 30))
+  shift
+  while ! "$@" >/dev/null 2>&1; do
+    if (( SECONDS >= deadline )); then
+      echo "Error: timed out waiting for $label." >&2
+      "$@" || return 1
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 certificate_has_domain() {
@@ -412,9 +503,35 @@ check_certificate() {
 
 certificate_renewal_uses_webroot() {
   local renewal=${1:-/etc/letsencrypt/renewal/$domain.conf}
-  [[ -f $renewal && ! -L $renewal ]] &&
-    grep -Eq '^[[:space:]]*authenticator[[:space:]]*=[[:space:]]*webroot[[:space:]]*$' "$renewal" &&
-    grep -Fq '/var/www/remnawave-selfsteal' "$renewal"
+  [[ -f $renewal && ! -L $renewal ]] || return 1
+  # ConfigObj is installed with Ubuntu's Certbot package. It understands
+  # Certbot's nested [[webroot_map]], lists, quoting and inline comments.
+  python3 - "$renewal" "$domain" <<'PY'
+import sys
+from configobj import ConfigObj, ConfigObjError
+
+try:
+    config = ConfigObj(sys.argv[1], encoding="utf-8", interpolation=False,
+                       file_error=True, raise_errors=True)
+    params = config.get("renewalparams", {})
+    if not isinstance(params, dict) or params.get("authenticator") != "webroot":
+        sys.exit(1)
+    mapping = params.get("webroot_map", {})
+    if not isinstance(mapping, dict):
+        sys.exit(1)
+    if sys.argv[2] in mapping:
+        root = mapping[sys.argv[2]]
+    else:
+        roots = params.get("webroot_path", [])
+        if isinstance(roots, str):
+            roots = [roots]
+        if not isinstance(roots, list) or not roots:
+            sys.exit(1)
+        root = roots[-1]
+    sys.exit(0 if root == "/var/www/remnawave-selfsteal" else 1)
+except (OSError, ConfigObjError, ValueError, TypeError):
+    sys.exit(1)
+PY
 }
 
 ensure_certificate() {
@@ -472,7 +589,7 @@ ensure_renewal_hook() {
 }
 
 check_local_tls() {
-  local listeners addresses
+  local listeners addresses http_version
   if ! listeners=$(ss -H -ltn '( sport = :9443 )'); then
     echo "Error: cannot inspect the TLS listener." >&2
     return 1
@@ -482,10 +599,11 @@ check_local_tls() {
     echo "Error: TLS must listen only on 127.0.0.1:9443; found: $addresses" >&2
     return 1
   fi
-  if ! curl -4fsS --noproxy '*' --max-time 10 \
+  if ! http_version=$(curl -4fsS --noproxy '*' --connect-timeout 2 --max-time 5 \
+    --http2 --tlsv1.3 --tls-max 1.3 --write-out '%{http_version}' \
     --resolve "$domain:9443:127.0.0.1" \
-    "https://$domain:9443/" -o /dev/null; then
-    echo "Error: local TLS validation failed." >&2
+    "https://$domain:9443/" -o /dev/null) || [[ $http_version != 2 ]]; then
+    echo "Error: local TLS 1.3 / HTTP/2 validation failed." >&2
     return 1
   fi
 }
@@ -776,28 +894,36 @@ if [[ $install_mode == new ]]; then
   create_initial_state
 fi
 
+cleanup_state_temporary_files
 write_managed_file "$PACKAGE_MARKER" 600 render_package_marker
 ensure_required_packages
 ensure_webroot
 ensure_http_nginx
-check_http_challenge
+wait_for_ready 'nginx HTTP challenge' check_http_challenge
 ensure_certificate
 ensure_https_nginx
 ensure_renewal_hook
-check_local_tls
+wait_for_ready 'nginx TLS 1.3 / HTTP/2 listener' check_local_tls
 
 RENEWAL_MARKER=$STATE_DIR/renewal.checked
-if [[ -e $RENEWAL_MARKER || -L $RENEWAL_MARKER ]]; then
-  if [[ ! -f $RENEWAL_MARKER ]] ||
-     ! cmp -s <(render_renewal_marker) "$RENEWAL_MARKER"; then
-    echo "Error: invalid renewal check marker." >&2
-    exit 1
+if [[ -L $RENEWAL_MARKER || ( -e $RENEWAL_MARKER && ! -f $RENEWAL_MARKER ) ]]; then
+  echo "Error: invalid renewal check marker." >&2
+  exit 1
+fi
+if ! check_renewal_record; then
+  # An old marker or changed renewal config/hook needs a new dry run.
+  if [[ -f $RENEWAL_MARKER ]]; then
+    if ! valid_renewal_marker "$RENEWAL_MARKER"; then
+      echo "Error: renewal check marker was changed." >&2
+      exit 1
+    fi
+    rm -- "$RENEWAL_MARKER"
   fi
-else
-  if certbot renew --dry-run --cert-name "$domain"; then
+  if certbot renew --dry-run --run-deploy-hooks --cert-name "$domain"; then
     write_managed_file "$RENEWAL_MARKER" 600 render_renewal_marker
   else
-    echo "Warning: renewal dry run failed; the installed certificate remains in place." >&2
+    echo "Error: renewal dry run failed; installation is incomplete. Retry --install." >&2
+    exit 1
   fi
 fi
 

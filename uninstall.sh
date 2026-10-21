@@ -32,6 +32,7 @@ fi
 
 assert_managed_file() {
   local file=$1 renderer=$2
+  check_directory_path "${file%/*}" || return 1
   if [[ -L $file || ( -e $file && ! -f $file ) ]]; then
     echo "Error: unexpected file type: $file" >&2
     return 1
@@ -44,6 +45,7 @@ assert_managed_file() {
 
 assert_managed_link() {
   local link=$1 expected=$2
+  check_directory_path "${link%/*}" || return 1
   if [[ -L $link ]]; then
     if [[ $(readlink -- "$link") != "$expected" ]]; then
       echo "Error: managed link was changed: $link" >&2
@@ -65,14 +67,27 @@ PACKAGE_MARKER=$STATE_DIR/packages.started
 RENEWAL_MARKER=$STATE_DIR/renewal.checked
 
 # Verify all expected content before removing any installed file.
+for directory in "$STATE_DIR" /etc/nginx/sites-available /etc/nginx/sites-enabled \
+                 /etc/letsencrypt/renewal-hooks/deploy \
+                 /var/www/remnawave-selfsteal/.well-known/acme-challenge; do
+  check_directory_path "$directory"
+done
 assert_managed_file "$HTTP_FILE" render_http_nginx_config
 assert_managed_file "$HTTPS_FILE" render_https_nginx_config
 assert_managed_file "$INDEX_FILE" render_index_html
 assert_managed_file "$HOOK_FILE" render_deploy_hook
 assert_managed_file "$PACKAGE_MARKER" render_package_marker
-assert_managed_file "$RENEWAL_MARKER" render_renewal_marker
+if [[ -L $RENEWAL_MARKER || ( -e $RENEWAL_MARKER && ! -f $RENEWAL_MARKER ) ]]; then
+  echo "Error: invalid renewal check marker." >&2
+  exit 1
+fi
+if [[ -f $RENEWAL_MARKER ]] && ! valid_renewal_marker "$RENEWAL_MARKER"; then
+  echo "Error: renewal check marker was changed." >&2
+  exit 1
+fi
 assert_managed_link "$HTTP_LINK" ../sites-available/remnawave-selfsteal.conf
 assert_managed_link "$HTTPS_LINK" ../sites-available/remnawave-selfsteal-tls.conf
+cleanup_state_temporary_files
 while IFS= read -r entry; do
   case $entry in
     state.conf|packages.started|renewal.checked) ;;
