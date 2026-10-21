@@ -131,7 +131,7 @@ report "HTTPS site" check_https_site
 report "TLS 1.3 + HTTP/2 :9443" check_local_tls
 report "Certbot timer" systemctl is-active --quiet certbot.timer
 report "Deploy hook" check_hook
-report "Renewal dry run" check_renewal_dry_run
+report "Renewal + deploy record" check_renewal_dry_run
 
 if (( failed != 0 )); then
   echo "SELF-STEAL INCOMPLETE" >&2

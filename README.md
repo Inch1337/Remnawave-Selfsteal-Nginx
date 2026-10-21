@@ -1,29 +1,30 @@
 # Remnawave Self-Steal Nginx
 
-**Development version. Do not use on a production VPS until the Ubuntu 24.04
-integration checks have passed.**
+**Версия в разработке. Перед использованием на рабочей VPS необходимо
+проверить установку и работу на тестовом сервере с Ubuntu 24.04.**
 
-This installer prepares an HTTP webroot for Let's Encrypt and an nginx TLS
-endpoint at `127.0.0.1:9443` with HTTP/2 and TLS 1.3 support.
-Remnawave Node configuration remains manual.
-It does not edit Docker, Remnawave, Xray or the firewall.
+Установщик создаёт HTTP-сайт для подтверждения домена Let's Encrypt
+и локальный TLS-сервер nginx на `127.0.0.1:9443` с поддержкой HTTP/2
+и TLS 1.3. Настройки Remnawave Node вносятся вручную через панель.
+Скрипт не изменяет Docker, Remnawave, Xray и правила сетевого экрана.
 
-## Supported host
+## Требования к серверу
 
-- Ubuntu 24.04 LTS on x86_64, run as root.
-- A domain with exactly one A record pointing to the VPS's public IPv4 and
-  no AAAA record.
-- Ports 80 and 9443 free before the first installation.
-- No pre-existing nginx installation. The package-provided default site is
-  left in place after nginx is installed.
-- No pre-existing Let's Encrypt lineage for the chosen domain.
-- If Remnawave Node is present, its Docker network mode must be `host`.
-- `curl` with HTTP/2 support, `resolvectl` and `ss` available for the
-  read-only preflight. Ubuntu's packaged curl supports HTTP/2.
+- Ubuntu 24.04 LTS, архитектура x86_64, запуск от root.
+- Домен с одной A-записью на публичный IPv4 этой VPS, без AAAA-записи.
+- Свободные TCP/80 и TCP/9443 перед первой установкой.
+- Отсутствие ранее установленного nginx. Стандартный сайт из пакета nginx
+  после установки сохраняется.
+- Отсутствие ранее созданного сертификата Let's Encrypt для выбранного домена
+  при первой установке. При повторном запуске свой сертификат используется повторно.
+- Для установленного Remnawave Node — режим Docker `network_mode: host`.
+- Доступные `curl` с HTTP/2, `resolvectl` и `ss` для предварительной проверки.
+  Пакет curl из Ubuntu поддерживает HTTP/2.
 
-Less than 1 GiB RAM or no swap produces a warning. Less than 2 GiB free disk
-space stops installation. This installer does not perform a full system
-upgrade or reboot.
+При объёме RAM меньше 1 ГиБ или отсутствии swap выводится предупреждение.
+Если свободного места на разделе `/` меньше 2 ГиБ, установка прекращается;
+при остатке от 2 до 4 ГиБ выводится предупреждение. Установщик не выполняет
+полное обновление системы и не перезагружает VPS.
 
 ## Пошаговая установка и настройка Remnawave
 
@@ -37,7 +38,7 @@ upgrade or reboot.
 | --- | --- |
 | `node.example.com` | Твой домен, на который установщик выпустит сертификат |
 | `8443` | Пример публичного порта существующего REALITY inbound; подставь свой |
-| `127.0.0.1:9443` | Локальный TLS endpoint nginx, к которому обращается Xray |
+| `127.0.0.1:9443` | Локальный адрес TLS-сервера nginx, к которому обращается Xray |
 
 Сначала подготовь домен и установи nginx. Профиль и Hosts в панели меняй
 только после успешной проверки self-steal.
@@ -59,7 +60,7 @@ upgrade or reboot.
    Изменение сети контейнера может прервать действующие подключения.
 
 Если Node ещё не установлен, self-steal можно подготовить заранее. Позже
-установи Node с host networking на эту же VPS.
+установи Node с `network_mode: host` на эту же VPS.
 
 ### 2. Склонируй актуальную версию
 
@@ -74,7 +75,7 @@ git push origin main
 ```bash
 sudo -i
 apt-get update
-apt-get install -y git curl ca-certificates openssl iproute2 python3-configobj
+apt-get install -y --no-install-recommends git curl ca-certificates openssl iproute2 python3-configobj
 ```
 
 Склонируй репозиторий:
@@ -120,11 +121,11 @@ bash install.sh --check
 ```
 
 Введи свой домен, например `node.example.com`. Ожидается сообщение об
-успешном preflight. Этот режим не меняет систему. Если отсутствует
+успешной предварительной проверке. Этот режим не меняет систему. Если отсутствует
 `resolvectl`, сначала выясни, как настроен DNS на VPS; не заменяй работающую
 настройку DNS вслепую.
 
-**Пока не меняй target, SNI и Hosts в Remnawave:** нового TLS endpoint
+**Пока не меняй target, SNI и Hosts в Remnawave:** нового TLS-сервера
 на этом этапе ещё нет.
 
 ### 4. Установи и проверь nginx
@@ -135,8 +136,9 @@ bash install.sh --install 2>&1 | tee install.log
 ```
 
 Введи тот же домен и контактный email для Let's Encrypt. Установщик
-подготовит nginx, получит сертификат и выполнит пробное продление с deploy
-hook. Дождись `Installation complete.` Затем:
+подготовит nginx, получит сертификат и выполнит пробное продление. После этого
+он отдельно запустит скрипт применения сертификата (deploy hook), проверит
+его код завершения и доступность nginx. Дождись `Installation complete.` Затем:
 
 ```bash
 bash check.sh 2>&1 | tee check.log
@@ -151,6 +153,10 @@ bash check.sh 2>&1 | tee check.log
 Сохрани прежние значения профиля и карточки Host, чтобы можно было вернуть
 рабочее подключение. Если профиль общий для нескольких нод с разными
 доменами, создай отдельную копию для этой ноды и назначь ей нужный inbound.
+Если создал копию профиля или новый inbound, открой **Internal Squads**
+и добавь этот inbound в группы нужных пользователей. Убедись, что пользователи
+состоят в этих группах. Привязка старого inbound не предоставляет доступ к новому.
+Подробности — в [документации групп доступа Remnawave](https://docs.rw/learn-en/squads/).
 
 В панели открой **Config Profiles**, выбери профиль нужной ноды и её
 REALITY inbound. В `streamSettings.realitySettings` измени только эти поля:
@@ -209,15 +215,17 @@ target-параметр, не оставляя противоречащие др
 в выбранном подключении указан новый SNI и правильный публичный порт.
 Подключись к ноде и открой сайт через VPN.
 
-Для обычной проверки сайта через публичный REALITY listener можно выполнить
+Для обычной проверки сайта через публичный порт REALITY можно выполнить
 с другого компьютера, подставив свой домен и порт:
 
 ```bash
 curl -I --http2 https://node.example.com:8443/
 ```
 
-В Windows PowerShell используй `curl.exe` вместо `curl`. Этот запрос
-проверяет HTTPS-маскировку через публичный listener, но не авторизацию
+В Windows PowerShell используй `curl.exe` вместо `curl`. Если установленная
+сборка curl не поддерживает HTTP/2, выполни команду с другого компьютера
+с поддерживающим HTTP/2 curl. Этот запрос
+проверяет HTTPS-маскировку через публичный порт, но не авторизацию
 VPN-клиента. Успешное подключение клиента проверяй отдельно.
 
 ### 8. Проверь повторный запуск
@@ -231,58 +239,202 @@ bash check.sh
 
 Установщик должен повторно использовать подходящий сертификат и свои
 файлы. При ошибке сохрани лог текущего этапа. Не запускай `uninstall.sh`
-для диагностики: он удалит сайт и локальный TLS endpoint, на который
+для диагностики: он удалит сайт и локальный TLS-сервер, на который
 уже может быть направлен REALITY target.
 
-## Installer behavior
+## Что устанавливается и расходует ресурсы
 
-`--check` performs preflight checks without changing the system. `--install`
-may install the `nginx`, `certbot`, `openssl` and `ca-certificates` Ubuntu
-packages, create files under
-`/etc/remnawave-selfsteal`, `/etc/nginx`, `/var/www/remnawave-selfsteal`
-and `/etc/letsencrypt`, and start or reload nginx. It uses Certbot's webroot
-mode; Certbot does not rewrite nginx configuration.
-The first certificate request asks for a Let's Encrypt contact email.
+| Компонент | Для чего нужен | Работа в фоне |
+| --- | --- | --- |
+| `nginx` | HTTP-сайт и локальный TLS-сервер для REALITY | Постоянная служба |
+| `certbot` и его зависимости Python | Выпуск и продление сертификата | Запускается по расписанию `certbot.timer` |
+| `openssl` | Работа с сертификатами и ключами | Только при вызове |
+| `ca-certificates` | Доверенные центры сертификации | Отдельной службы нет |
+| `git` | Получение и обновление файлов проекта | Только при вызове |
+| `curl`, `iproute2` | HTTP/TLS-запросы и просмотр слушающих портов через `ss` | Только при вызове |
+| `python3-configobj` | Чтение настроек продления Certbot | Только при вызове |
 
-The installer records its domain in
-`/etc/remnawave-selfsteal/state.conf`. Repeating `--install` reuses an
-existing valid certificate and expected files. It stops if a managed file
-has different contents rather than overwriting it. If a package operation
-was interrupted and `dpkg` reports an incomplete transaction, repair that
-transaction manually before retrying.
+Установщик добавляет только отсутствующие пакеты `nginx`, `certbot`, `openssl`
+и `ca-certificates` вместе с обязательными зависимостями Ubuntu.
+Утилиты из шага 2 нужны для клонирования и предварительных проверок.
+`python3-configobj` также входит в зависимости Certbot; отдельная установка
+на шаге 2 позволяет выполнить проверки вспомогательных функций до установки Certbot.
+Необязательные рекомендуемые пакеты отключены параметром `--no-install-recommends`
+в обеих командах установки. Уже установленные пакеты этот параметр не удаляет.
 
-After starting or reloading nginx, the installer waits up to 30 seconds
-(plus the final probe timeout) for the expected HTTP challenge or TLS
-endpoint to respond. It verifies both TLS 1.3 and negotiated HTTP/2.
-Temporary marker files left by an interrupted write are cleaned only while
-holding the installation lock, inside the root-owned mode-700 state
-directory. Unexpected file types, owners or permissions stop cleanup.
+Проект не добавляет контейнеры, базу данных или постоянно работающий скрипт.
+Нагрузка nginx зависит от числа соединений и TLS-запросов; журналы занимают место
+на диске. Фиксированных обещаний по RAM и CPU нет: замеры на VPS не выполнялись.
+Настройки процессов nginx используются из пакета Ubuntu; проект не добавляет
+собственных заданий ротации журналов.
+Стандартный сайт nginx сохраняется и может отвечать на запросы к IP или другим
+именам; сайт self-steal выбирается по настроенному домену.
 
-`check.sh` reads installation state and checks DNS, nginx, HTTP, the
-certificate, local TLS 1.3/HTTP/2, the renewal hook and the record of a
-successful renewal dry run without making changes. Certbot's effective
-webroot for the chosen domain is read from its configuration, including
-the per-domain `webroot_map`. The successful dry-run record includes hashes
-of the renewal configuration and deploy hook. A changed configuration
-requires a new dry run on the next `--install`. Dry runs execute the deploy
-hook as well. A failed dry run exits with an error and leaves installation
-incomplete; repeat `--install` to retry.
-`uninstall.sh` removes only verified installer-managed files. It leaves
-the nginx and certbot packages installed and asks separately whether to
-delete the Let's Encrypt certificate. Keeping the certificate after removal
-requires a working HTTP-01 webroot for future renewals.
-Uninstall refuses symbolic links in parent directories of managed paths
-before removing installed files. Retained nginx packages mean a subsequent
-fresh installation still falls under the existing-nginx restriction;
-uninstall does not automatically purge packages or unrelated nginx sites.
+## Как работает установщик
 
-These changes have not been tested in this editing pass. Live certificate
-issuance/renewal, systemd behavior and the real Remnawave connection still
-need verification on the test VPS before release.
+`bash install.sh --check` выполняет предварительную проверку без изменения
+конфигурации. `bash install.sh --install` устанавливает пакеты, создаёт свои
+файлы, включает автозапуск nginx и `certbot.timer`, запускает или перечитывает
+конфигурацию nginx. При первом выпуске сертификата запрашивается email.
+Certbot использует режим `webroot` и сам не переписывает конфигурацию nginx.
 
-## Release status
+| Путь | Содержимое |
+| --- | --- |
+| `/etc/remnawave-selfsteal/state.conf` | Домен, локальный порт и версия формата состояния |
+| `/etc/remnawave-selfsteal/packages.started` | Отметка о начале установки пакетов |
+| `/etc/remnawave-selfsteal/renewal.checked` | Запись об успешном пробном продлении и отдельной проверке применения сертификата |
+| `/etc/remnawave-selfsteal/tls-v0.1.0.conf.bak` | Исходный TLS-конфиг, если выполнялся переход со старой версии |
+| `/etc/nginx/sites-available/remnawave-selfsteal.conf` | HTTP-сайт на TCP/80 |
+| `/etc/nginx/sites-available/remnawave-selfsteal-tls.conf` | TLS-сервер на `127.0.0.1:9443` |
+| `/etc/nginx/sites-enabled/` | Ссылки на два конфига проекта |
+| `/var/www/remnawave-selfsteal/` | Страница сайта и файлы подтверждения HTTP-01 |
+| `/etc/letsencrypt/live/ТВОЙ_ДОМЕН/` | Ссылки Certbot на действующий сертификат и ключ |
+| `/etc/letsencrypt/renewal/ТВОЙ_ДОМЕН.conf` | Настройки продления сертификата |
+| `/etc/letsencrypt/renewal-hooks/deploy/remnawave-selfsteal-nginx.sh` | Скрипт проверки и перечитывания конфигурации nginx после продления |
 
-Version `v0.1.0` will be tagged after a clean Ubuntu 24.04 installation,
-repeat run, interrupted-run recovery and uninstall have been exercised on
-the test VPS. Until then, commands that download from `main` are not a
-stable installation method.
+Повторный запуск использует сохранённый домен и подходящий действующий сертификат.
+Изменённые вручную файлы не перезаписываются. Исключение — точно распознанный
+старый шаблон TLS-конфига: его обновление описано ниже. Если операция с пакетами
+прервалась и `dpkg` сообщает о незавершённой настройке, сначала восстанови
+состояние пакетного менеджера согласно его сообщению, затем повтори установку.
+
+После запуска или перечитывания конфигурации nginx выполняются повторные запросы
+готовности с порогом ожидания 30 секунд; выполняющийся запрос и завершающий
+диагностический запрос могут увеличить общее время. Проверяется работа HTTP-01,
+а затем TLS 1.3 с согласованным HTTP/2.
+
+Одновременные установка и удаление блокируются общей блокировкой.
+Оставшиеся после прерывания временные записи состояния очищаются только внутри
+каталога root с правами `700`, при совпадении ожидаемых имени, типа, владельца
+и прав файла. Неожиданные файлы и символические ссылки останавливают операцию.
+
+`check.sh` проверяет DNS, nginx, HTTP, сертификат, локальные TLS 1.3/HTTP/2,
+таймер продления, скрипт применения сертификата и сохранённую запись пробного
+продления. Он не запускает новое продление и не проверяет авторизацию VPN-клиента.
+Для чтения настроек Certbot учитывается привязка домена в `webroot_map`.
+
+Запись успешного продления содержит хеши настроек Certbot и скрипта применения
+сертификата. При их изменении или старом формате записи следующий `--install`
+повторит пробное продление. Поскольку Certbot не передаёт ошибку deploy hook
+через свой код завершения, установщик затем отдельно запускает установленный
+скрипт с доменом и путём сертификата, требует успешного завершения и повторно
+проверяет TLS-сервер. Только после этого создаётся запись об успехе.
+При ошибке установка остаётся незавершённой; после устранения причины повтори
+`--install`. Это проверка текущего состояния, а не гарантия всех будущих продлений.
+
+## Обновление установленной версии
+
+Выполняй обновление из root-сессии на VPS. Сохрани собственные изменения
+репозитория до `git pull`; не удаляй каталог состояния или сертификаты.
+
+```bash
+cd /opt/remnawave-selfsteal
+git pull --ff-only
+set -o pipefail
+bash install.sh --install 2>&1 | tee install-update.log
+bash check.sh
+```
+
+Старый неизменённый TLS-шаблон из коммита `2f225ce` (без HTTP/2) распознаётся
+автоматически. Установщик сохраняет его в
+`/etc/remnawave-selfsteal/tls-v0.1.0.conf.bak`, атомарно заменяет новым шаблоном
+и запускает `nginx -t`. При ошибке этой проверки восстанавливается прежний файл.
+Если шаблон или права старого файла отличаются от ожидаемых, автоматический
+переход прекращается. Не удаляй такой файл вслепую: сначала разберись с отличиями.
+
+При ошибке перечитывания конфигурации резервная копия остаётся на месте.
+При необходимости возврата к старой версии восстанови её в
+`/etc/nginx/sites-available/remnawave-selfsteal-tls.conf` с правами `644`,
+проверь `nginx -t` и только затем перечитай конфигурацию. Старый шаблон не имеет
+HTTP/2 и не пройдёт текущую проверку готовности; это временный откат.
+Актуальный `uninstall.sh` распознаёт оба исходных шаблона.
+
+Для прежней записи успешного продления будет выполнено новое пробное продление
+с отдельной проверкой применения сертификата. Домен, ключи REALITY, публичный
+порт и настройки панели при обновлении скрипт не меняет.
+
+## Обслуживание и журналы
+
+Для продления сохраняй A-запись на VPS и доступность TCP/80 снаружи.
+Certbot запускается системным таймером; дополнительно добавлять его в cron
+или постоянно запускать установщик не требуется.
+
+Для просмотра состояния на VPS:
+
+```bash
+systemctl status nginx certbot.timer --no-pager
+systemctl list-timers --all certbot.timer
+journalctl -u nginx -u certbot.service --since '24 hours ago' --no-pager
+```
+
+Журналы nginx по умолчанию находятся в `/var/log/nginx/access.log`
+и `/var/log/nginx/error.log`, журнал Certbot — в
+`/var/log/letsencrypt/letsencrypt.log`. Настройки можно найти в
+`/etc/nginx/nginx.conf`, `/etc/logrotate.d/nginx` и `/etc/logrotate.d/certbot`;
+доступность файлов ротации зависит от установленного пакета и конфигурации VPS.
+Следи за свободным местом и ошибками продления, особенно после изменения DNS,
+сетевого экрана или конфигурации nginx. Файлы `install*.log` и `check.log`,
+созданные командами из этой инструкции, системной ротацией не обслуживаются.
+
+Для повторной ручной проверки продления укажи свой домен:
+
+```bash
+certbot renew --dry-run --run-deploy-hooks --cert-name node.example.com
+```
+
+Успешный код завершения одной этой команды не подтверждает успешность deploy hook:
+просматривай сообщения об ошибках и журналы. Эта ручная команда не создаёт
+`renewal.checked`. Чтобы повторить полный этап установщика после изменения
+настроек продления, используй `bash install.sh --install`.
+Если настройки не менялись и запись актуальна, установщик пропустит новое
+пробное продление.
+
+## Удаление
+
+1. Сначала верни рабочие `target`/`dest`, `serverNames` и при необходимости `xver`
+   в профиле Remnawave, восстанови SNI в Hosts. Если возвращаешь другой профиль,
+   восстанови привязки ноды, Host и доступ пользователей в Internal Squads.
+2. Примени настройки, обнови подписку клиента и убедись, что подключение
+   больше не зависит от `127.0.0.1:9443`.
+3. На VPS из root-сессии выполни:
+
+```bash
+cd /opt/remnawave-selfsteal
+bash uninstall.sh
+```
+
+Скрипт удаляет только распознанные файлы проекта, включая свою резервную копию
+старого TLS-конфига. Изменённые вручную файлы и символические ссылки в родительских
+каталогах останавливают удаление. Сертификат Let's Encrypt удаляется только
+после отдельного согласия. Если оставить его, для будущего продления потребуется
+другой работающий HTTP-01 сайт с нужным каталогом; прежний сайт уже удалён.
+
+**Пакеты nginx и Certbot, их службы и автозапуск сохраняются.** Стандартный сайт
+nginx может продолжать слушать TCP/80, а `certbot.timer` — запускать продление.
+Это позволяет сохранить другие сайты и сертификаты, добавленные на VPS позже.
+
+Только если nginx больше не обслуживает другие сайты, а Certbot не продлевает
+другие нужные сертификаты, можно убрать оставшуюся фоновую работу:
+
+```bash
+systemctl disable --now nginx certbot.timer
+```
+
+Остановка таймера не прерывает уже запущенное продление: дождись завершения
+`certbot.service`. Отключение служб не удаляет пакеты и не закрывает правила
+сетевого экрана. Правила SSH, API Node и действующего REALITY-порта сохраняй.
+
+Повторная установка с нуля после удаления всё ещё ограничена запретом на
+существующий nginx и сертификат выбранного домена. Для штатного обновления
+используй раздел обновления выше. Не выполняй массовое удаление пакетов или
+`/etc/letsencrypt` ради обхода ограничений: там могут находиться чужие настройки.
+
+## Статус версии
+
+Изменения внесены без запуска тестов и контейнеров по просьбе владельца проекта.
+Выпуск и продление настоящего сертификата, работа systemd, переход со старой
+версии и подключение через Remnawave ещё требуют проверки на тестовой VPS.
+
+Тег `v0.1.0` планируется после проверки чистой установки Ubuntu 24.04,
+повторного запуска, восстановления после прерывания и удаления.
+До этого ветка `main` остаётся версией в разработке.

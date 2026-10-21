@@ -105,12 +105,33 @@ render_index_html() {
 HTML
 }
 
+# Exact template shipped in 2f225ce. Only this unmodified version is migrated.
+render_legacy_https_nginx_config() {
+  cat <<NGINX
+# Managed by Remnawave Self-Steal Nginx v0.1.0
+server {
+    listen 127.0.0.1:9443 ssl;
+    server_name $domain;
+
+    ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
+
+    root /var/www/remnawave-selfsteal;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+NGINX
+}
+
 render_package_marker() {
   printf 'Remnawave Self-Steal Nginx package setup started: 0.1.0\n'
 }
 
 render_renewal_marker() {
-  printf 'Remnawave Self-Steal Nginx renewal dry run passed: 0.1.0\n'
+  printf 'Remnawave Self-Steal Nginx renewal and deploy verification passed: 0.1.0\n'
   sha256sum -- "/etc/letsencrypt/renewal/$domain.conf" \
     /etc/letsencrypt/renewal-hooks/deploy/remnawave-selfsteal-nginx.sh
 }
@@ -240,9 +261,14 @@ valid_renewal_marker() {
   local -a lines
   [[ -f $marker && ! -L $marker ]] || return 1
   mapfile -t lines < "$marker"
-  [[ ${lines[0]:-} == 'Remnawave Self-Steal Nginx renewal dry run passed: 0.1.0' ]] || return 1
+  local legacy_header='Remnawave Self-Steal Nginx renewal dry run passed: 0.1.0'
+  local current_header='Remnawave Self-Steal Nginx renewal and deploy verification passed: 0.1.0'
+  [[ ${lines[0]:-} == "$legacy_header" || ${lines[0]:-} == "$current_header" ]] || return 1
   # Accept the previous one-line format for upgrade and uninstall only.
-  (( ${#lines[@]} == 1 )) && return 0
+  if (( ${#lines[@]} == 1 )); then
+    [[ ${lines[0]} == "$legacy_header" ]]
+    return
+  fi
   (( ${#lines[@]} == 3 )) || return 1
   [[ ${lines[1]:0:64} =~ ^[a-f0-9]{64}$ &&
      ${lines[1]:64} == "  /etc/letsencrypt/renewal/$domain.conf" &&
@@ -571,9 +597,50 @@ ensure_certificate() {
   fi
 }
 
+migrate_legacy_https_config() (
+  local file=/etc/nginx/sites-available/remnawave-selfsteal-tls.conf
+  local backup=$STATE_DIR/tls-v0.1.0.conf.bak
+  local staged= rollback= changed=0
+  check_directory_path "${file%/*}" || return 1
+  if [[ -L $file || ( -e $file && ! -f $file ) ]]; then
+    echo "Error: invalid TLS configuration path." >&2
+    return 1
+  fi
+  [[ -f $file ]] || return 0
+  cmp -s <(render_https_nginx_config) "$file" && return 0
+  if ! cmp -s <(render_legacy_https_nginx_config) "$file" ||
+     [[ $(stat -c %a -- "$file") != 644 ]]; then
+    echo "Error: TLS configuration is not a known unmodified template; migration stopped." >&2
+    return 1
+  fi
+  write_managed_file "$backup" 600 render_legacy_https_nginx_config || return 1
+  staged=$(mktemp "${file%/*}/.remnawave-selfsteal.XXXXXX") || return 1
+  trap '
+    if (( changed )); then
+      if ! mv -fT -- "$rollback" "$file"; then
+        echo "Error: TLS rollback failed; original configuration is in $backup." >&2
+      fi
+    fi
+    rm -f -- "$staged" "$rollback"
+  ' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  rollback=$(mktemp "${file%/*}/.remnawave-selfsteal.XXXXXX") || return 1
+  render_https_nginx_config > "$staged" || return 1
+  cp -- "$backup" "$rollback" || return 1
+  chmod 644 "$staged" "$rollback" || return 1
+  changed=1
+  mv -fT -- "$staged" "$file" || return 1
+  nginx -t || return 1
+  changed=0
+  echo "TLS configuration upgraded. Original saved in $backup."
+)
+
 ensure_https_nginx() {
   local available=/etc/nginx/sites-available/remnawave-selfsteal-tls.conf
   local enabled=/etc/nginx/sites-enabled/remnawave-selfsteal-tls.conf
+  migrate_legacy_https_config
   write_managed_file "$available" 644 render_https_nginx_config
   ensure_site_link "$available" "$enabled"
   nginx -t
@@ -919,12 +986,19 @@ if ! check_renewal_record; then
     fi
     rm -- "$RENEWAL_MARKER"
   fi
-  if certbot renew --dry-run --run-deploy-hooks --cert-name "$domain"; then
-    write_managed_file "$RENEWAL_MARKER" 600 render_renewal_marker
-  else
+  if ! certbot renew --dry-run --run-deploy-hooks --cert-name "$domain"; then
     echo "Error: renewal dry run failed; installation is incomplete. Retry --install." >&2
     exit 1
   fi
+  # Certbot does not propagate deploy-hook failures in its exit status.
+  # Invoke our actual installed hook separately and require its exit status.
+  if ! RENEWED_LINEAGE="/etc/letsencrypt/live/$domain" RENEWED_DOMAINS="$domain" \
+    /etc/letsencrypt/renewal-hooks/deploy/remnawave-selfsteal-nginx.sh; then
+    echo "Error: certificate deploy hook failed; installation is incomplete. Retry --install." >&2
+    exit 1
+  fi
+  wait_for_ready 'nginx after certificate deployment' check_local_tls
+  write_managed_file "$RENEWAL_MARKER" 600 render_renewal_marker
 fi
 
 echo "Installation complete."
