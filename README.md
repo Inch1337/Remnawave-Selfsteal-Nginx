@@ -25,16 +25,216 @@ Less than 1 GiB RAM or no swap produces a warning. Less than 2 GiB free disk
 space stops installation. This installer does not perform a full system
 upgrade or reboot.
 
-## Use
+## Пошаговая установка и настройка Remnawave
 
-Keep `install.sh`, `check.sh` and `uninstall.sh` together. Inspect them before
-running on a VPS.
+Все команды ниже, кроме отправки коммита, выполняются на VPS. Сначала
+проверь установку на тестовом сервере. При ошибке остановись на текущем
+этапе и сохрани вывод.
+
+В примерах:
+
+| Значение | Назначение |
+| --- | --- |
+| `node.example.com` | Твой домен, на который установщик выпустит сертификат |
+| `8443` | Пример публичного порта существующего REALITY inbound; подставь свой |
+| `127.0.0.1:9443` | Локальный TLS endpoint nginx, к которому обращается Xray |
+
+Сначала подготовь домен и установи nginx. Профиль и Hosts в панели меняй
+только после успешной проверки self-steal.
+
+### 1. Подготовь DNS, сеть и Node
+
+1. Создай одну DNS A-запись `node.example.com`, указывающую на публичный IPv4
+   нужной VPS. Домен вводится без `https://`, порта и пути.
+2. Удали AAAA-запись этого имени. Если используешь Cloudflare, отключи
+   проксирование для этой записи: режим **DNS only**.
+3. Разреши входящий TCP/80 в firewall VPS и в сетевых правилах хостинга.
+   Он нужен для выпуска и последующих продлений сертификата.
+4. Сохрани доступность текущего публичного порта REALITY — например,
+   TCP/8443. Локальный TCP/9443 наружу не открывай. Правила SSH и порта API
+   Node на этом этапе не меняй.
+5. В Docker Compose своего Remnawave Node должен быть `network_mode: host`.
+   Если режим другой, сначала приведи Node к поддерживаемой схеме по
+   [документации Remnawave Node](https://docs.rw/install/remnawave-node/).
+   Изменение сети контейнера может прервать действующие подключения.
+
+Если Node ещё не установлен, self-steal можно подготовить заранее. Позже
+установи Node с host networking на эту же VPS.
+
+### 2. Склонируй актуальную версию
+
+Сначала отправь коммит с компьютера на GitHub:
+
+```powershell
+git push origin main
+```
+
+На VPS перейди в root-сессию и установи необходимые инструменты:
 
 ```bash
-sudo bash install.sh --check
-sudo bash install.sh --install
-sudo bash check.sh
+sudo -i
+apt-get update
+apt-get install -y git curl ca-certificates openssl iproute2 python3-configobj
 ```
+
+Склонируй репозиторий:
+
+```bash
+git clone https://github.com/Inch1337/Remnawave-Selfsteal-Nginx.git /opt/remnawave-selfsteal
+cd /opt/remnawave-selfsteal
+git log -1 --oneline
+```
+
+Если он уже склонирован и в нём нет несохранённых правок:
+
+```bash
+cd /opt/remnawave-selfsteal
+git pull --ff-only
+git log -1 --oneline
+```
+
+Убедись, что показан нужный коммит. Файлы `install.sh`, `check.sh` и
+`uninstall.sh` должны оставаться в одной папке. Отдельный старый
+`/root/install.sh` не обновляется при клонировании — запускай скрипты
+именно из `/opt/remnawave-selfsteal`.
+
+### 3. Выполни предварительные проверки
+
+Сначала синтаксис и локальные проверки вспомогательных функций:
+
+```bash
+bash -n install.sh &&
+bash -n check.sh &&
+bash -n uninstall.sh &&
+bash -n tests/test_helpers.sh &&
+bash tests/test_helpers.sh
+```
+
+Ожидается `Helper checks passed.` Эти проверки не устанавливают nginx и
+не выпускают сертификат.
+
+Затем проверь саму VPS:
+
+```bash
+bash install.sh --check
+```
+
+Введи свой домен, например `node.example.com`. Ожидается сообщение об
+успешном preflight. Этот режим не меняет систему. Если отсутствует
+`resolvectl`, сначала выясни, как настроен DNS на VPS; не заменяй работающую
+настройку DNS вслепую.
+
+**Пока не меняй target, SNI и Hosts в Remnawave:** нового TLS endpoint
+на этом этапе ещё нет.
+
+### 4. Установи и проверь nginx
+
+```bash
+set -o pipefail
+bash install.sh --install 2>&1 | tee install.log
+```
+
+Введи тот же домен и контактный email для Let's Encrypt. Установщик
+подготовит nginx, получит сертификат и выполнит пробное продление с deploy
+hook. Дождись `Installation complete.` Затем:
+
+```bash
+bash check.sh 2>&1 | tee check.log
+```
+
+Продолжай только после `[OK]` у всех пунктов и `SELF-STEAL READY`.
+Теперь на VPS подготовлен локальный nginx для self-steal; подключение
+через сам Remnawave проверяется после следующих шагов.
+
+### 5. Измени серверный Config Profile
+
+Сохрани прежние значения профиля и карточки Host, чтобы можно было вернуть
+рабочее подключение. Если профиль общий для нескольких нод с разными
+доменами, создай отдельную копию для этой ноды и назначь ей нужный inbound.
+
+В панели открой **Config Profiles**, выбери профиль нужной ноды и её
+REALITY inbound. В `streamSettings.realitySettings` измени только эти поля:
+
+```json
+{
+  "target": "127.0.0.1:9443",
+  "serverNames": ["node.example.com"],
+  "xver": 0
+}
+```
+
+Это фрагмент настроек, а не полный профиль. Подставь домен, использованный
+при установке. Сохрани остальные параметры REALITY, включая `privateKey`
+и `shortIds`, а также существующие параметры протокола и транспорта.
+В конфигурации, использующей старое имя `dest`, замени соответствующий
+target-параметр, не оставляя противоречащие друг другу `dest` и `target`.
+
+Публичный `port` inbound оставь прежним — например, `8443`. Значение
+`9443` здесь используется только внутри `target`. `xver: 0` соответствует
+созданному nginx без PROXY protocol.
+
+Сохрани профиль и примени его к нужной ноде. Убедись, что нода приняла
+конфигурацию без ошибок. Ручное редактирование генерируемого Xray-конфига
+в контейнере не заменяет изменение профиля в панели.
+
+### 6. Обнови Hosts и SNI в панели
+
+Открой **Hosts** и отредактируй карточку для этой ноды:
+
+| Поле | Что указать |
+| --- | --- |
+| Inbound | REALITY inbound из профиля, изменённого на предыдущем шаге |
+| Address | `node.example.com` либо публичный IP этой VPS; подходящий существующий адрес можно сохранить |
+| Port | Публичный порт inbound, например `8443` |
+| Advanced Options → SNI | `node.example.com` — тот же домен, что в сертификате и `serverNames` |
+
+**Удали прежний сторонний SNI из карточки Host.** Явно заданный SNI
+переопределяет унаследованное значение. Вместо явного нового SNI можно
+оставить поле пустым, чтобы наследовать `serverNames` из выбранного inbound.
+Сохрани карточку. Подробнее о наследовании — в
+[документации Remnawave Hosts](https://docs.rw/learn-en/hosts/).
+
+Здесь Hosts — раздел панели Remnawave. Файл `/etc/hosts` на VPS менять
+не требуется. Поле HTTP `Host` в транспортных настройках также не нужно
+заполнять только ради self-steal для обычного TCP/REALITY.
+
+В итоге адрес подключения ведёт на VPS, порт — на публичный REALITY inbound,
+а SNI совпадает с доменом self-steal. В Address нельзя указывать
+`127.0.0.1`, а в Port — локальный `9443`.
+
+### 7. Обнови подписку и проверь клиент
+
+Обнови подписку в клиентском приложении. Если используешь отдельно
+импортированную ссылку, импортируй её актуальную версию. Проверь, что
+в выбранном подключении указан новый SNI и правильный публичный порт.
+Подключись к ноде и открой сайт через VPN.
+
+Для обычной проверки сайта через публичный REALITY listener можно выполнить
+с другого компьютера, подставив свой домен и порт:
+
+```bash
+curl -I --http2 https://node.example.com:8443/
+```
+
+В Windows PowerShell используй `curl.exe` вместо `curl`. Этот запрос
+проверяет HTTPS-маскировку через публичный listener, но не авторизацию
+VPN-клиента. Успешное подключение клиента проверяй отдельно.
+
+### 8. Проверь повторный запуск
+
+На VPS из папки проекта:
+
+```bash
+bash install.sh --install 2>&1 | tee install-repeat.log
+bash check.sh
+```
+
+Установщик должен повторно использовать подходящий сертификат и свои
+файлы. При ошибке сохрани лог текущего этапа. Не запускай `uninstall.sh`
+для диагностики: он удалит сайт и локальный TLS endpoint, на который
+уже может быть направлен REALITY target.
+
+## Installer behavior
 
 `--check` performs preflight checks without changing the system. `--install`
 may install the `nginx`, `certbot`, `openssl` and `ca-certificates` Ubuntu
@@ -57,14 +257,6 @@ endpoint to respond. It verifies both TLS 1.3 and negotiated HTTP/2.
 Temporary marker files left by an interrupted write are cleaned only while
 holding the installation lock, inside the root-owned mode-700 state
 directory. Unexpected file types, owners or permissions stop cleanup.
-
-After `--install` reports completion, configure Remnawave manually:
-
-```text
-target      = 127.0.0.1:9443
-serverNames = your.domain.example
-xver        = 0
-```
 
 `check.sh` reads installation state and checks DNS, nginx, HTTP, the
 certificate, local TLS 1.3/HTTP/2, the renewal hook and the record of a
