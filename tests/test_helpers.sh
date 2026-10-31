@@ -61,4 +61,14 @@ certificate_renewal_uses_webroot "$fixture/renewal.conf"
 printf '[renewalparams]\nauthenticator = standalone\n' > "$fixture/renewal.conf"
 assert_failure certificate_renewal_uses_webroot "$fixture/renewal.conf"
 
+# A sourced installer must check for a missing renewal record without
+# requiring main() to have initialized its installation-state variable.
+renewal_status=0
+renewal_output=$(bash -c 'set -u; source "$1"; domain=example.com; unset STATE_DIR; check_renewal_record' \
+    _ "$REPO_DIR/install.sh" 2>&1) || renewal_status=$?
+if (( renewal_status > 1 )) || [[ -n $renewal_output ]]; then
+  echo "Renewal record check produced an unexpected error: $renewal_output" >&2
+  exit 1
+fi
+
 echo "Helper checks passed."

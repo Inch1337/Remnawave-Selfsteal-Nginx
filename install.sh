@@ -325,7 +325,7 @@ cleanup_state_temporary_files() {
 }
 
 check_renewal_record() {
-  local marker=$STATE_DIR/renewal.checked
+  local marker=/etc/remnawave-selfsteal/renewal.checked
   [[ -f $marker && ! -L $marker ]] &&
     certificate_renewal_uses_webroot &&
     cmp -s <(render_renewal_marker) "$marker"
