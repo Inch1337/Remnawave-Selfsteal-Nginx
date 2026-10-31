@@ -53,6 +53,7 @@ HOOK_FILE=/etc/letsencrypt/renewal-hooks/deploy/remnawave-selfsteal-nginx.sh
 PACKAGE_MARKER=$STATE_DIR/packages.started
 RENEWAL_MARKER=$STATE_DIR/renewal.checked
 TLS_BACKUP=$STATE_DIR/tls-v0.1.0.conf.bak
+HTTP_BACKUP=$STATE_DIR/http-v0.1.0.conf.bak
 
 # Verify all expected content before removing any installed file.
 for directory in "$STATE_DIR" /etc/nginx/sites-available /etc/nginx/sites-enabled \
@@ -60,7 +61,8 @@ for directory in "$STATE_DIR" /etc/nginx/sites-available /etc/nginx/sites-enable
                  /var/www/remnawave-selfsteal/.well-known/acme-challenge; do
   check_directory_path "$directory"
 done
-assert_managed_file "$HTTP_FILE" render_http_nginx_config
+assert_managed_file "$HTTP_FILE" render_http_nginx_config render_legacy_http_nginx_config
+assert_managed_file "$HTTP_BACKUP" render_legacy_http_nginx_config
 assert_managed_file "$HTTPS_FILE" render_https_nginx_config render_legacy_https_nginx_config
 assert_managed_file "$TLS_BACKUP" render_legacy_https_nginx_config
 assert_managed_file "$INDEX_FILE" render_index_html
@@ -79,7 +81,7 @@ assert_managed_link "$HTTPS_LINK" ../sites-available/remnawave-selfsteal-tls.con
 cleanup_state_temporary_files
 while IFS= read -r entry; do
   case $entry in
-    state.conf|packages.started|renewal.checked|tls-v0.1.0.conf.bak) ;;
+    state.conf|packages.started|renewal.checked|tls-v0.1.0.conf.bak|http-v0.1.0.conf.bak) ;;
     *)
       echo "Error: unexpected file in installation state: $entry" >&2
       exit 1
@@ -113,7 +115,7 @@ if (( removed_http || removed_https )) && command -v nginx >/dev/null 2>&1; then
 fi
 
 for file in "$HTTP_FILE" "$HTTPS_FILE" "$HOOK_FILE" "$INDEX_FILE" \
-            "$PACKAGE_MARKER" "$RENEWAL_MARKER" "$TLS_BACKUP"; do
+            "$PACKAGE_MARKER" "$RENEWAL_MARKER" "$TLS_BACKUP" "$HTTP_BACKUP"; do
   if [[ -f $file ]]; then
     rm -- "$file"
   fi

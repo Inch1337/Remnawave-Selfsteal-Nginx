@@ -68,9 +68,10 @@ check_http_listener() {
 
 check_http_page() {
   local response
-  response=$(curl -4fsS --noproxy '*' --max-time 10 \
+  response=$(curl -4sS --noproxy '*' --max-time 10 -o /dev/null \
+    -w '%{http_code} %{redirect_url}' \
     --resolve "$domain:80:127.0.0.1" "http://$domain/") || return 1
-  [[ $response == "$(render_index_html)" ]]
+  [[ $response == "301 https://$domain/" ]]
 }
 
 check_hook() {
@@ -92,7 +93,7 @@ report "nginx service" systemctl is-active --quiet nginx
 report "Webroot" check_webroot
 report "HTTP site" check_http_site
 report "HTTP :80" check_http_listener
-report "HTTP page" check_http_page
+report "HTTP redirect" check_http_page
 report "Certificate" check_certificate
 report "Renewal webroot" certificate_renewal_uses_webroot
 report "HTTPS site" check_https_site

@@ -22,7 +22,7 @@ render_http_nginx_config > "$fixture/http.conf"
 render_https_nginx_config > "$fixture/https.conf"
 grep -Fxq '    listen 127.0.0.1:9443 ssl http2;' "$fixture/https.conf"
 assert_failure grep -Fq '0.0.0.0:9443' "$fixture/https.conf"
-grep -Fq 'try_files $uri $uri/ =404;' "$fixture/http.conf"
+grep -Fq 'try_files $uri =404;' "$fixture/http.conf"
 
 write_managed_file "$fixture/index.html" 644 render_index_html
 write_managed_file "$fixture/index.html" 644 render_index_html

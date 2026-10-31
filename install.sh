@@ -137,6 +137,27 @@ server {
     }
 
     location / {
+        return 301 https://$domain\$request_uri;
+    }
+}
+NGINX
+}
+
+render_legacy_http_nginx_config() {
+  cat <<NGINX
+# Managed by Remnawave Self-Steal Nginx v0.1.0
+server {
+    listen 80;
+    server_name $domain;
+
+    root /var/www/remnawave-selfsteal;
+    index index.html;
+
+    location ^~ /.well-known/acme-challenge/ {
+        try_files \$uri =404;
+    }
+
+    location / {
         try_files \$uri \$uri/ =404;
     }
 }
@@ -483,6 +504,47 @@ write_http_site_file() {
   echo "HTTP configuration: created at $site_file."
 }
 
+migrate_legacy_http_config() (
+  local file=${1:-/etc/nginx/sites-available/remnawave-selfsteal.conf}
+  local backup=${2:-$STATE_DIR/http-v0.1.0.conf.bak}
+  local staged= rollback= changed=0
+  check_directory_path "${file%/*}" || return 1
+  check_directory_path "${backup%/*}" || return 1
+  if [[ -L $file || ( -e $file && ! -f $file ) ]]; then
+    echo "Error: invalid HTTP configuration path." >&2
+    return 1
+  fi
+  [[ -f $file ]] || return 0
+  cmp -s <(render_http_nginx_config) "$file" && return 0
+  if ! cmp -s <(render_legacy_http_nginx_config) "$file" ||
+     [[ $(stat -c %a -- "$file") != 644 ]]; then
+    echo "Error: HTTP configuration is not a known unmodified template; migration stopped." >&2
+    return 1
+  fi
+  write_managed_file "$backup" 600 render_legacy_http_nginx_config || return 1
+  staged=$(mktemp "${file%/*}/.remnawave-selfsteal.XXXXXX") || return 1
+  trap '
+    if (( changed )); then
+      if ! mv -fT -- "$rollback" "$file"; then
+        echo "Error: HTTP rollback failed; original configuration is in $backup." >&2
+      fi
+    fi
+    rm -f -- "$staged" "$rollback"
+  ' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  rollback=$(mktemp "${file%/*}/.remnawave-selfsteal.XXXXXX") || return 1
+  render_http_nginx_config > "$staged" || return 1
+  cp -- "$backup" "$rollback" || return 1
+  chmod 644 "$staged" "$rollback" || return 1
+  changed=1
+  mv -fT -- "$staged" "$file" || return 1
+  nginx -t || return 1
+  changed=0
+  echo "HTTP configuration upgraded. Original saved in $backup."
+)
+
 ensure_directory() {
   local directory=$1
   check_directory_path "$directory" || return 1
@@ -525,6 +587,7 @@ ensure_site_link() {
 ensure_http_nginx() {
   local available=/etc/nginx/sites-available/remnawave-selfsteal.conf
   local enabled=/etc/nginx/sites-enabled/remnawave-selfsteal.conf
+  migrate_legacy_http_config "$available"
   write_http_site_file "$available"
   ensure_site_link "$available" "$enabled"
   nginx -t
