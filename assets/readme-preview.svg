@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="500" viewBox="0 0 960 500" role="img" aria-labelledby="title description">
+  <title id="title">Remnawave Self-Steal Nginx: установка и схема портов</title>
+  <desc id="description">Иллюстрация команд проверки и установки. Порт 80 обслуживает HTTP и выпуск сертификата, 443 принадлежит Xray, локальный nginx слушает 127.0.0.1:9443.</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1">
+      <stop offset="0" stop-color="#101827"/>
+      <stop offset="1" stop-color="#0a1220"/>
+    </linearGradient>
+    <linearGradient id="accent" x2="1" y2="0">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#5eead4"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="1" y="1" width="958" height="498" rx="20" fill="url(#background)" stroke="#334155" stroke-width="2"/>
+  <path d="M21 1h918a20 20 0 0 1 20 20v38H1V21A20 20 0 0 1 21 1Z" fill="#172235"/>
+  <path d="M1 59h958" stroke="#334155"/>
+  <circle cx="27" cy="30" r="6" fill="#fb7185"/>
+  <circle cx="48" cy="30" r="6" fill="#fbbf24"/>
+  <circle cx="69" cy="30" r="6" fill="#4ade80"/>
+  <text x="480" y="36" text-anchor="middle" fill="#cbd5e1" font-family="system-ui, sans-serif" font-size="15" font-weight="600">Remnawave Self-Steal Nginx</text>
+
+  <rect x="24" y="82" width="573" height="393" rx="14" fill="#0b1422" stroke="#263449"/>
+  <text x="48" y="114" fill="#64748b" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="13">VPS / INSTALL &amp; CHECK</text>
+  <path d="M48 129h525" stroke="#263449"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="16">
+    <text x="48" y="164" fill="#5eead4">$ <tspan fill="#e2e8f0">bash install.sh --check</tspan></text>
+    <text x="48" y="192" fill="#94a3b8">DNS matches this VPS.</text>
+    <text x="48" y="218" fill="#4ade80">Initial checks passed.</text>
+
+    <text x="48" y="265" fill="#5eead4">$ <tspan fill="#e2e8f0">bash install.sh --install</tspan></text>
+    <text x="48" y="293" fill="#94a3b8">Site template: welcome</text>
+    <text x="48" y="319" fill="#4ade80">Installation complete.</text>
+
+    <text x="48" y="366" fill="#5eead4">$ <tspan fill="#e2e8f0">bash check.sh</tspan></text>
+    <text x="48" y="394" fill="#94a3b8">Certificate               <tspan fill="#4ade80">[OK]</tspan></text>
+    <text x="48" y="419" fill="#94a3b8">TLS 1.3 + HTTP/2 :9443    <tspan fill="#4ade80">[OK]</tspan></text>
+    <text x="48" y="449" fill="#5eead4" font-weight="700">SELF-STEAL READY</text>
+  </g>
+
+  <rect x="617" y="82" width="319" height="393" rx="14" fill="#111e30" stroke="#263449"/>
+  <text x="643" y="114" fill="#e2e8f0" font-family="system-ui, sans-serif" font-size="17" font-weight="700">Куда идут соединения</text>
+  <path d="M643 129h267" stroke="#263449"/>
+
+  <rect x="643" y="150" width="267" height="75" rx="10" fill="#162b3c"/>
+  <rect x="643" y="150" width="4" height="75" rx="2" fill="#38bdf8"/>
+  <text x="662" y="177" fill="#7dd3fc" font-family="ui-monospace, Consolas, monospace" font-size="18" font-weight="700">:80</text>
+  <text x="662" y="204" fill="#cbd5e1" font-family="system-ui, sans-serif" font-size="13">HTTP-01 и редирект на HTTPS</text>
+
+  <rect x="643" y="239" width="267" height="75" rx="10" fill="#173137"/>
+  <rect x="643" y="239" width="4" height="75" rx="2" fill="#5eead4"/>
+  <text x="662" y="266" fill="#99f6e4" font-family="ui-monospace, Consolas, monospace" font-size="18" font-weight="700">:443</text>
+  <text x="662" y="293" fill="#cbd5e1" font-family="system-ui, sans-serif" font-size="13">Xray / REALITY, публичный вход</text>
+
+  <rect x="643" y="328" width="267" height="75" rx="10" fill="#2b2843"/>
+  <rect x="643" y="328" width="4" height="75" rx="2" fill="#a78bfa"/>
+  <text x="662" y="355" fill="#c4b5fd" font-family="ui-monospace, Consolas, monospace" font-size="18" font-weight="700">:9443</text>
+  <text x="662" y="382" fill="#cbd5e1" font-family="system-ui, sans-serif" font-size="13">nginx, только 127.0.0.1</text>
+
+  <text x="643" y="441" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="12">:8443 — опциональный XHTTP inbound</text>
+  <path d="M617 465h319" stroke="url(#accent)" stroke-width="2"/>
+</svg>
