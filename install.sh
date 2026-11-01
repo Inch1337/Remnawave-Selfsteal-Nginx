@@ -55,6 +55,54 @@ read_installed_domain() {
   domain=${domain,,}
 }
 
+read_site_template() {
+  local marker=/etc/remnawave-selfsteal/site-template
+  local -a lines
+  site_template=welcome
+  if [[ -L $marker || ( -e $marker && ! -f $marker ) ]]; then
+    echo "Error: invalid site template marker." >&2
+    return 1
+  fi
+  if [[ ! -f $marker ]]; then
+    return 0
+  fi
+  if ! mapfile -t lines < "$marker" ||
+     [[ -z ${lines[0]+x} || -n ${lines[1]+x} ]]; then
+    echo "Error: invalid site template marker." >&2
+    return 1
+  fi
+  case ${lines[0]} in
+    welcome|studio|journal) site_template=${lines[0]} ;;
+    *)
+      echo "Error: unknown site template in installation state." >&2
+      return 1
+      ;;
+  esac
+  if ! cmp -s <(render_site_template_marker) "$marker"; then
+    echo "Error: invalid site template marker content." >&2
+    return 1
+  fi
+}
+
+choose_site_template() {
+  local choice
+  echo "Site template: 1) Welcome  2) Studio (dark)  3) Journal (light)"
+  if ! read -r -p "Choose site template [1]: " choice </dev/tty; then
+    echo "Error: cannot read site template choice from terminal." >&2
+    return 1
+  fi
+  case $choice in
+    ""|1) site_template=welcome ;;
+    2) site_template=studio ;;
+    3) site_template=journal ;;
+    *)
+      echo "Error: choose template 1, 2 or 3." >&2
+      return 1
+      ;;
+  esac
+  echo "Site template: $site_template"
+}
+
 show_remnawave_config() {
   cat <<CONFIG
 Remnawave values for $domain (from saved installation state)
@@ -213,7 +261,8 @@ NGINX
 }
 
 render_index_html() {
-  cat <<'HTML'
+  case ${site_template:-welcome} in
+    welcome) cat <<'HTML'
 <!doctype html>
 <html lang="en">
 <head>
@@ -225,6 +274,71 @@ render_index_html() {
 </body>
 </html>
 HTML
+      ;;
+    studio) cat <<HTML
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Northline Studio</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; background: #151b24; color: #edf2f2; }
+    main { max-width: 780px; margin: 0 auto; padding: 12vh 7vw; }
+    small { color: #92b5af; letter-spacing: .18em; text-transform: uppercase; }
+    h1 { font-size: clamp(3rem, 9vw, 6rem); line-height: 1; margin: 1.5rem 0; }
+    p { max-width: 36rem; color: #bdc8c9; font-size: 1.2rem; line-height: 1.7; }
+    footer { margin-top: 5rem; border-top: 1px solid #39464e; padding-top: 1.5rem; color: #92b5af; }
+  </style>
+</head>
+<body>
+  <main>
+    <small>Northline Studio</small>
+    <h1>Space for new ideas.</h1>
+    <p>A small digital studio exploring clear design, useful tools and thoughtful details.</p>
+    <footer>$domain</footer>
+  </main>
+</body>
+</html>
+HTML
+      ;;
+    journal) cat <<HTML
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Field Notes</title>
+  <style>
+    :root { font-family: Georgia, serif; color: #243029; background: #f4f1e8; }
+    body { margin: 0; }
+    header, main, footer { max-width: 760px; margin: auto; padding: 2rem 7vw; }
+    header { border-bottom: 1px solid #b9b9aa; font-size: 1.4rem; }
+    h1 { font-size: clamp(2.8rem, 8vw, 5rem); font-weight: normal; line-height: 1.1; }
+    p { font-size: 1.2rem; line-height: 1.8; }
+    .label, footer { font: .85rem system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; color: #67756c; }
+    footer { border-top: 1px solid #b9b9aa; }
+  </style>
+</head>
+<body>
+  <header>Field Notes</header>
+  <main>
+    <div class="label">Ideas & observations</div>
+    <h1>A place to pause and explore.</h1>
+    <p>Collected thoughts on everyday spaces, simple technology and the things worth noticing.</p>
+  </main>
+  <footer>$domain</footer>
+</body>
+</html>
+HTML
+      ;;
+    *) echo "Error: unsupported site template." >&2; return 1 ;;
+  esac
+}
+
+render_site_template_marker() {
+  printf '%s\n' "$site_template"
 }
 
 # Exact template shipped in 2f225ce. Only this unmodified version is migrated.
@@ -415,6 +529,8 @@ create_initial_state() {
   printf 'DOMAIN=%s\nTARGET_PORT=9443\nVERSION=0.1.0\n' \
     "$domain" > "$staged_dir/state.conf"
   chmod 600 "$staged_dir/state.conf"
+  render_site_template_marker > "$staged_dir/site-template"
+  chmod 600 "$staged_dir/site-template"
 
   if [[ -e $STATE_DIR || -L $STATE_DIR ]]; then
     echo "Error: installation state appeared during setup." >&2
@@ -907,6 +1023,11 @@ else
   install_mode=new
   echo "Installation state: new."
 fi
+if [[ $install_mode == resume ]]; then
+  read_site_template || exit 1
+else
+  site_template=welcome
+fi
 
 # Preflight checks
 if [[ ! -r /etc/os-release ]]; then
@@ -1067,6 +1188,7 @@ if [[ $action == check ]]; then
 fi
 
 if [[ $install_mode == new ]]; then
+  choose_site_template || exit 1
   create_initial_state
 fi
 

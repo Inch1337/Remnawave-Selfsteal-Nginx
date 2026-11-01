@@ -28,6 +28,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/install.sh"
 
 read_installed_domain || exit 1
+read_site_template || exit 1
 
 failed=0
 warned=0
