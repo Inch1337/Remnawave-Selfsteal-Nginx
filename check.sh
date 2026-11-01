@@ -30,6 +30,8 @@ source "$SCRIPT_DIR/install.sh"
 read_installed_domain || exit 1
 
 failed=0
+warned=0
+CERT_WARNING_SECONDS=$((14 * 24 * 60 * 60))
 diagnostic_hint() {
   case $1 in
     "Ubuntu 24.04") echo "Requires Ubuntu 24.04; check /etc/os-release." ;;
@@ -74,7 +76,15 @@ report() {
   local label=$1 output
   shift
   if output=$("$@" 2>&1); then
-    printf '%-23s [OK]\n' "$label"
+    if [[ $label == Certificate ]] &&
+       ! openssl x509 -in "/etc/letsencrypt/live/$domain/fullchain.pem" \
+         -noout -checkend "$CERT_WARNING_SECONDS" >/dev/null 2>&1; then
+      printf '%-23s [WARN]\n' "$label"
+      echo "  Certificate expires in less than 14 days; check Certbot renewal."
+      warned=1
+    else
+      printf '%-23s [OK]\n' "$label"
+    fi
     if (( verbose )); then
       case $label in
         DNS) [[ -z $output ]] || printf '  %s\n' "${output//$'\n'/$'\n  '}" ;;
@@ -175,5 +185,9 @@ report "Renewal + deploy record" check_renewal_dry_run
 if (( failed != 0 )); then
   echo "SELF-STEAL INCOMPLETE" >&2
   exit 1
+fi
+if (( warned != 0 )); then
+  echo "SELF-STEAL READY WITH WARNINGS"
+  exit 0
 fi
 echo "SELF-STEAL READY"
