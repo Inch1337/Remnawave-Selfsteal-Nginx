@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+verbose=0
+if (( $# > 1 )); then
+  echo "Usage: bash check.sh [--status|--verbose]" >&2
+  exit 2
+fi
+case ${1:-} in
+  "") ;;
+  --status|--verbose) verbose=1 ;;
+  --help|-h)
+    echo "Usage: bash check.sh [--status|--verbose]"
+    exit 0
+    ;;
+  *)
+    echo "Usage: bash check.sh [--status|--verbose]" >&2
+    exit 2
+    ;;
+esac
+
 if [[ $EUID -ne 0 ]]; then
   echo "Error: run this script as root." >&2
   exit 1
@@ -12,13 +30,65 @@ source "$SCRIPT_DIR/install.sh"
 read_installed_domain || exit 1
 
 failed=0
+diagnostic_hint() {
+  case $1 in
+    "Ubuntu 24.04") echo "Requires Ubuntu 24.04; check /etc/os-release." ;;
+    DNS) echo "Check the domain A record, public VPS IPv4 and absence of AAAA." ;;
+    "nginx config") echo "Inspect the nginx error above and the site files in /etc/nginx/sites-available/." ;;
+    "nginx service") echo "Inspect: systemctl status nginx --no-pager; journalctl -u nginx -n 50 --no-pager" ;;
+    Webroot|"HTTP site"|"HTTPS site") echo "Check installer-managed files; rerun bash install.sh --install after resolving any manual changes." ;;
+    "HTTP :80") echo "Check the nginx listener and whether another service occupies TCP/80." ;;
+    "HTTP redirect") echo "Check the local HTTP response and the managed nginx HTTP site." ;;
+    Certificate) echo "Check the certificate for this domain and /var/log/letsencrypt/letsencrypt.log." ;;
+    "Renewal webroot") echo "Check the domain's Certbot renewal configuration and its webroot mapping." ;;
+    "TLS 1.3 + HTTP/2 :9443") echo "Check nginx on 127.0.0.1:9443 and its certificate; inspect journalctl -u nginx." ;;
+    "Certbot timer") echo "Inspect: systemctl status certbot.timer --no-pager" ;;
+    "Deploy hook") echo "Check the managed Certbot deploy hook and its executable permission." ;;
+    "Renewal + deploy record") echo "After fixing renewal or the deploy hook, rerun bash install.sh --install." ;;
+  esac
+}
+
+show_certificate_status() {
+  local certificate=/etc/letsencrypt/live/$domain/fullchain.pem
+  local expiry issuer expiry_epoch now_epoch days_left
+  expiry=$(openssl x509 -in "$certificate" -noout -enddate 2>/dev/null) || return 0
+  issuer=$(openssl x509 -in "$certificate" -noout -issuer 2>/dev/null) || return 0
+  expiry=${expiry#notAfter=}
+  printf '  Domain: %s\n  Expires: %s\n  %s\n' "$domain" "$expiry" "$issuer"
+  if expiry_epoch=$(date -d "$expiry" +%s 2>/dev/null); then
+    now_epoch=$(date +%s)
+    days_left=$(( (expiry_epoch - now_epoch) / 86400 ))
+    printf '  Days remaining: %d\n' "$days_left"
+  fi
+}
+
+show_timer_status() {
+  local next_run
+  next_run=$(systemctl show certbot.timer --property=NextElapseUSecRealtime --value 2>/dev/null) || return 0
+  if [[ -n $next_run && $next_run != n/a ]]; then
+    printf '  Next timer run: %s\n' "$next_run"
+  fi
+}
+
 report() {
-  local label=$1
+  local label=$1 output
   shift
-  if "$@" >/dev/null 2>&1; then
+  if output=$("$@" 2>&1); then
     printf '%-23s [OK]\n' "$label"
+    if (( verbose )); then
+      case $label in
+        DNS) [[ -z $output ]] || printf '  %s\n' "${output//$'\n'/$'\n  '}" ;;
+        Certificate) show_certificate_status ;;
+        "Certbot timer") show_timer_status ;;
+      esac
+    fi
   else
     printf '%-23s [FAIL]\n' "$label"
+    if (( verbose )); then
+      [[ -z $output ]] || printf '  %s\n' "${output//$'\n'/$'\n  '}"
+      printf '  Hint: '
+      diagnostic_hint "$label"
+    fi
     failed=1
   fi
 }
