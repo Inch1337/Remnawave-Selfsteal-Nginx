@@ -55,6 +55,32 @@ read_installed_domain() {
   domain=${domain,,}
 }
 
+show_remnawave_config() {
+  cat <<CONFIG
+Remnawave values for $domain (from saved installation state)
+
+Set these fields in realitySettings of each REALITY inbound:
+{
+  "target": "127.0.0.1:9443",
+  "serverNames": ["$domain"],
+  "xver": 0
+}
+
+This is a fragment, not a full Config Profile. Keep your existing
+privateKey, shortIds, clients, DNS, routing and transport settings.
+
+Host examples (replace ports with your actual public inbound ports):
+  TCP/REALITY:   inbound=your TCP inbound,   Address=$domain, Port=443,  SNI=$domain
+  XHTTP/REALITY: inbound=your XHTTP inbound, Address=$domain, Port=8443, SNI=$domain
+
+Enable the chosen inbound on the Node and in the user's Internal Squad.
+Create one Host per inbound. The HTTP redirect needs a working HTTPS
+inbound on public TCP/443. Do not expose local TCP/9443 to the internet.
+
+This command does not check the panel or installation health.
+CONFIG
+}
+
 check_domain_dns() {
   local server_ipv4 a_result domain_ipv4 aaaa_result
 
@@ -815,15 +841,16 @@ check_local_tls() {
 
 main() {
   if (( $# > 1 )); then
-    echo "Usage: bash install.sh [--check|--install]" >&2
+    echo "Usage: bash install.sh [--check|--install|--show-config]" >&2
     exit 2
   fi
 
   case ${1:-} in
     ""|--check) action=check ;;
     --install) action=install ;;
+    --show-config) action=show-config ;;
     *)
-      echo "Usage: bash install.sh [--check|--install]" >&2
+      echo "Usage: bash install.sh [--check|--install|--show-config]" >&2
       exit 2
       ;;
   esac
@@ -831,6 +858,12 @@ main() {
   if [[ $EUID -ne 0 ]]; then
     echo "Error: run this script as root." >&2
     exit 1
+  fi
+
+  if [[ $action == show-config ]]; then
+    read_installed_domain || exit 1
+    show_remnawave_config
+    return 0
   fi
 
   if [[ $action == install ]]; then
