@@ -35,7 +35,7 @@ warned=0
 CERT_WARNING_SECONDS=$((14 * 24 * 60 * 60))
 diagnostic_hint() {
   case $1 in
-    "Ubuntu 24.04") echo "Requires Ubuntu 24.04; check /etc/os-release." ;;
+    "Ubuntu release") echo "Requires Ubuntu 24.04 or 26.04; check /etc/os-release." ;;
     DNS) echo "Check the domain A record, public VPS IPv4 and absence of AAAA." ;;
     "nginx config") echo "Inspect the nginx error above and the site files in /etc/nginx/sites-available/." ;;
     "nginx service") echo "Inspect: systemctl status nginx --no-pager; journalctl -u nginx -n 50 --no-pager" ;;
@@ -107,7 +107,7 @@ report() {
 check_ubuntu() {
   local ID VERSION_ID
   . /etc/os-release
-  [[ $ID == ubuntu && $VERSION_ID == 24.04 ]]
+  supported_ubuntu_release "${ID:-}" "${VERSION_ID:-}"
 }
 
 check_http_site() {
@@ -167,7 +167,7 @@ check_renewal_dry_run() {
 }
 
 echo "Remnawave Self-Steal Check"
-report "Ubuntu 24.04" check_ubuntu
+report "Ubuntu release" check_ubuntu
 report "DNS" check_domain_dns
 report "nginx config" nginx -t
 report "nginx service" systemctl is-active --quiet nginx

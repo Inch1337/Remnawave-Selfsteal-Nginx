@@ -25,6 +25,10 @@ valid_domain() {
   return 0
 }
 
+supported_ubuntu_release() {
+  [[ $1 == ubuntu && ( $2 == 24.04 || $2 == 26.04 ) ]]
+}
+
 read_installed_domain() {
   local state_dir=/etc/remnawave-selfsteal
   local state_file=$state_dir/state.conf
@@ -1037,8 +1041,8 @@ fi
 
 . /etc/os-release
 
-if [[ ${ID:-} != ubuntu || ${VERSION_ID:-} != 24.04 ]]; then
-  echo "Error: only Ubuntu 24.04 is supported." >&2
+if ! supported_ubuntu_release "${ID:-}" "${VERSION_ID:-}"; then
+  echo "Error: only Ubuntu 24.04 and 26.04 are supported." >&2
   exit 1
 fi
 
