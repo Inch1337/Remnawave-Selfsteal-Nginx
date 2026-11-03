@@ -29,6 +29,16 @@ supported_ubuntu_release() {
   [[ $1 == ubuntu && ( $2 == 24.04 || $2 == 26.04 ) ]]
 }
 
+current_ubuntu_release() {
+  local ID VERSION_ID
+  if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+    if [[ ${ID:-} == ubuntu ]]; then
+      printf '%s' "${VERSION_ID:-}"
+    fi
+  fi
+}
+
 read_installed_domain() {
   local state_dir=/etc/remnawave-selfsteal
   local state_file=$state_dir/state.conf
@@ -243,10 +253,15 @@ NGINX
 }
 
 render_https_nginx_config() {
+  local release=${1:-$(current_ubuntu_release)}
+  local http2_settings='    listen 127.0.0.1:9443 ssl http2;'
+  if [[ $release == 26.04 ]]; then
+    http2_settings=$'    listen 127.0.0.1:9443 ssl;\n    http2 on;'
+  fi
   cat <<NGINX
 # Managed by Remnawave Self-Steal Nginx v0.1.0
 server {
-    listen 127.0.0.1:9443 ssl http2;
+$http2_settings
     server_name $domain;
 
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -262,6 +277,10 @@ server {
     }
 }
 NGINX
+}
+
+render_deprecated_https_nginx_config() {
+  render_https_nginx_config 24.04
 }
 
 render_index_html() {
@@ -883,7 +902,7 @@ ensure_certificate() {
 
 migrate_legacy_https_config() (
   local file=/etc/nginx/sites-available/remnawave-selfsteal-tls.conf
-  local backup=$STATE_DIR/tls-v0.1.0.conf.bak
+  local backup= source_renderer=
   local staged= rollback= changed=0
   check_directory_path "${file%/*}" || return 1
   if [[ -L $file || ( -e $file && ! -f $file ) ]]; then
@@ -892,12 +911,22 @@ migrate_legacy_https_config() (
   fi
   [[ -f $file ]] || return 0
   cmp -s <(render_https_nginx_config) "$file" && return 0
-  if ! cmp -s <(render_legacy_https_nginx_config) "$file" ||
-     [[ $(stat -c %a -- "$file") != 644 ]]; then
+  if [[ $(stat -c %a -- "$file") != 644 ]]; then
     echo "Error: TLS configuration is not a known unmodified template; migration stopped." >&2
     return 1
   fi
-  write_managed_file "$backup" 600 render_legacy_https_nginx_config || return 1
+  if cmp -s <(render_legacy_https_nginx_config) "$file"; then
+    backup=$STATE_DIR/tls-v0.1.0.conf.bak
+    source_renderer=render_legacy_https_nginx_config
+  elif [[ $(current_ubuntu_release) == 26.04 ]] &&
+       cmp -s <(render_deprecated_https_nginx_config) "$file"; then
+    backup=$STATE_DIR/tls-http2-listen.conf.bak
+    source_renderer=render_deprecated_https_nginx_config
+  else
+    echo "Error: TLS configuration is not a known unmodified template; migration stopped." >&2
+    return 1
+  fi
+  write_managed_file "$backup" 600 "$source_renderer" || return 1
   staged=$(mktemp "${file%/*}/.remnawave-selfsteal.XXXXXX") || return 1
   trap '
     if (( changed )); then

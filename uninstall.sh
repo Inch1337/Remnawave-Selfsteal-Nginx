@@ -16,16 +16,19 @@ read_installed_domain || exit 1
 read_site_template || exit 1
 
 assert_managed_file() {
-  local file=$1 renderer=$2 legacy_renderer=${3:-}
+  local file=$1 renderer
+  shift
   check_directory_path "${file%/*}" || return 1
   if [[ -L $file || ( -e $file && ! -f $file ) ]]; then
     echo "Error: unexpected file type: $file" >&2
     return 1
   fi
-  if [[ -f $file ]] && ! cmp -s <("$renderer") "$file"; then
-    if [[ -n $legacy_renderer ]] && cmp -s <("$legacy_renderer") "$file"; then
-      return 0
-    fi
+  if [[ -f $file ]]; then
+    for renderer in "$@"; do
+      if cmp -s <("$renderer") "$file"; then
+        return 0
+      fi
+    done
     echo "Error: managed file was changed: $file" >&2
     return 1
   fi
@@ -55,6 +58,7 @@ PACKAGE_MARKER=$STATE_DIR/packages.started
 SITE_TEMPLATE_MARKER=$STATE_DIR/site-template
 RENEWAL_MARKER=$STATE_DIR/renewal.checked
 TLS_BACKUP=$STATE_DIR/tls-v0.1.0.conf.bak
+HTTP2_BACKUP=$STATE_DIR/tls-http2-listen.conf.bak
 HTTP_BACKUP=$STATE_DIR/http-v0.1.0.conf.bak
 
 # Verify all expected content before removing any installed file.
@@ -65,8 +69,10 @@ for directory in "$STATE_DIR" /etc/nginx/sites-available /etc/nginx/sites-enable
 done
 assert_managed_file "$HTTP_FILE" render_http_nginx_config render_legacy_http_nginx_config
 assert_managed_file "$HTTP_BACKUP" render_legacy_http_nginx_config
-assert_managed_file "$HTTPS_FILE" render_https_nginx_config render_legacy_https_nginx_config
+assert_managed_file "$HTTPS_FILE" render_https_nginx_config \
+  render_deprecated_https_nginx_config render_legacy_https_nginx_config
 assert_managed_file "$TLS_BACKUP" render_legacy_https_nginx_config
+assert_managed_file "$HTTP2_BACKUP" render_deprecated_https_nginx_config
 assert_managed_file "$INDEX_FILE" render_index_html
 assert_managed_file "$SITE_TEMPLATE_MARKER" render_site_template_marker
 assert_managed_file "$HOOK_FILE" render_deploy_hook
@@ -84,7 +90,7 @@ assert_managed_link "$HTTPS_LINK" ../sites-available/remnawave-selfsteal-tls.con
 cleanup_state_temporary_files
 while IFS= read -r entry; do
   case $entry in
-    state.conf|site-template|packages.started|renewal.checked|tls-v0.1.0.conf.bak|http-v0.1.0.conf.bak) ;;
+    state.conf|site-template|packages.started|renewal.checked|tls-v0.1.0.conf.bak|tls-http2-listen.conf.bak|http-v0.1.0.conf.bak) ;;
     *)
       echo "Error: unexpected file in installation state: $entry" >&2
       exit 1
@@ -119,7 +125,7 @@ fi
 
 for file in "$HTTP_FILE" "$HTTPS_FILE" "$HOOK_FILE" "$INDEX_FILE" \
             "$PACKAGE_MARKER" "$SITE_TEMPLATE_MARKER" "$RENEWAL_MARKER" \
-            "$TLS_BACKUP" "$HTTP_BACKUP"; do
+            "$TLS_BACKUP" "$HTTP2_BACKUP" "$HTTP_BACKUP"; do
   if [[ -f $file ]]; then
     rm -- "$file"
   fi

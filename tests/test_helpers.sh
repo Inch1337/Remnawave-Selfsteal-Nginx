@@ -19,9 +19,13 @@ assert_failure valid_domain 'https://example.com'
 assert_failure valid_domain 'example..com'
 
 render_http_nginx_config > "$fixture/http.conf"
-render_https_nginx_config > "$fixture/https.conf"
-grep -Fxq '    listen 127.0.0.1:9443 ssl http2;' "$fixture/https.conf"
-assert_failure grep -Fq '0.0.0.0:9443' "$fixture/https.conf"
+render_https_nginx_config 24.04 > "$fixture/https-24.conf"
+render_https_nginx_config 26.04 > "$fixture/https-26.conf"
+grep -Fxq '    listen 127.0.0.1:9443 ssl http2;' "$fixture/https-24.conf"
+grep -Fxq '    listen 127.0.0.1:9443 ssl;' "$fixture/https-26.conf"
+grep -Fxq '    http2 on;' "$fixture/https-26.conf"
+assert_failure grep -Fq 'ssl http2;' "$fixture/https-26.conf"
+assert_failure grep -Fq '0.0.0.0:9443' "$fixture/https-26.conf"
 grep -Fq 'try_files $uri =404;' "$fixture/http.conf"
 
 write_managed_file "$fixture/index.html" 644 render_index_html
